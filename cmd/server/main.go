@@ -81,6 +81,7 @@ func run() error {
 	registerRecommendConfig(server, client)
 	registerValidateConfig(server, client)
 	registerExportConfig(server, client)
+	registerEstimateCost(server, client)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -409,6 +410,58 @@ func errorResult(err error) *mcp.CallToolResult {
 		IsError: true,
 		Content: []mcp.Content{&mcp.TextContent{Text: "Error: " + err.Error()}},
 	}
+}
+
+type estimateCostInput struct {
+	HoursPerDay float64  `json:"hours_per_day"`
+	Roles       []string `json:"roles"`
+}
+
+func estimateCostSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"hours_per_day": map[string]any{
+				"type":        "number",
+				"default":     8,
+				"description": "Average hours of usage per day (default: 8)",
+			},
+			"roles": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Filter specific agent roles (e.g. [\"sdd-apply\", \"sdd-verify\"]). Omit for all roles.",
+			},
+		},
+	}
+}
+
+func registerEstimateCost(server *mcp.Server, client *api.Client) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "estimate_cost",
+		Title: "Estimate Monthly Cost",
+		Description: `Estimates monthly API costs based on your recommended model configuration.
+
+For each agent role, it:
+1. Gets the recommended model and its pricing
+2. Estimates tokens per session based on agent type (e.g. orchestrator uses ~50K input, sdd-apply uses ~100K input)
+3. Calculates monthly cost: tokens × sessions × price
+
+Assumes ~22 working days/month with 1 hour sessions.
+Shows breakdown by agent and by provider.
+
+Use this to understand the financial impact before applying a configuration.`,
+		InputSchema: estimateCostSchema(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in estimateCostInput) (*mcp.CallToolResult, any, error) {
+		result, err := api.EstimateCost(ctx, client, in.HoursPerDay, in.Roles)
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+
+		text := api.FormatCostResult(result)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		}, nil, nil
+	})
 }
 
 type validateConfigInput struct{}
