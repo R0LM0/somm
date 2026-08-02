@@ -14,6 +14,7 @@ import (
 
 	"github.com/AlonsoSG0/model-advisor-mcp/internal/api"
 	"github.com/AlonsoSG0/model-advisor-mcp/internal/guide"
+	"github.com/joho/godotenv"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -25,6 +26,9 @@ func main() {
 }
 
 func run() error {
+	// Load .env file if present (silent ignore if missing)
+	_ = godotenv.Load()
+
 	var (
 		ocKey string
 		orKey string
