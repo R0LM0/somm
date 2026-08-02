@@ -13,8 +13,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/AlonsoSG0/model-advisor-mcp/internal/api"
-	"github.com/AlonsoSG0/model-advisor-mcp/internal/guide"
+	"github.com/R0LM0/sub-aware-agent-model-advisor-go/internal/api"
+	"github.com/R0LM0/sub-aware-agent-model-advisor-go/internal/guide"
 	"github.com/joho/godotenv"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )

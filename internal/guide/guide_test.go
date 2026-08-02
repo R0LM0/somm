@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AlonsoSG0/model-advisor-mcp/internal/guide"
+	"github.com/R0LM0/sub-aware-agent-model-advisor-go/internal/guide"
 )
 
 func TestExtract(t *testing.T) {
