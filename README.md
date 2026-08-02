@@ -11,6 +11,7 @@ Agent-Model Recommendation Advisor for Gentle AI. Fetches available models from 
 - Cross-reference with OpenRouter benchmarks and pricing
 - Read agent selection criteria from Gentle AI guide
 - Search specific model benchmarks
+- **Recommend optimal model configuration per agent role**
 - Automatic .env configuration loading
 
 ## Installation
@@ -77,6 +78,34 @@ Available agents:
 
 #### get_model_benchmarks
 Search OpenRouter for detailed benchmarks.
+
+Parameters:
+- query: string — model ID or name
+
+#### recommend_config
+Detect configured providers and recommend optimal model per agent role.
+
+Parameters:
+- roles: string[] (optional) — filter specific agent roles
+
+Example output:
+```
+Tu configuración actual:
+✅ OpenCode Go (API key configurada)
+✅ OpenRouter (API key configurada)
+
+Recomendación por agente:
+
+orchestrator → DeepSeek V4 Pro
+  Calidad: 44.3 intelligence | Precio: $0.435/M input
+  Provider: OpenCode Go
+  Por qué: Mejor relación calidad/precio para routing
+
+sdd-apply → Kimi K3
+  Calidad: 76.2 coding | Precio: $0.95/M input
+  Provider: Kimi Code (vía OpenRouter)
+  Por qué: Tenés acceso K3, es el mejor coding de Kimi
+```
 
 Parameters:
 - query: string — model ID or name

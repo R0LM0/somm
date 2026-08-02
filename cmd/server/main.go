@@ -77,6 +77,7 @@ func run() error {
 	registerListModels(server, client)
 	registerGetAgentCriteria(server)
 	registerGetModelBenchmarks(server, client)
+	registerRecommendConfig(server, client)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -357,4 +358,52 @@ func errorResult(err error) *mcp.CallToolResult {
 		IsError: true,
 		Content: []mcp.Content{&mcp.TextContent{Text: "Error: " + err.Error()}},
 	}
+}
+
+type recommendConfigInput struct {
+	Roles []string `json:"roles"`
+}
+
+func recommendConfigSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"roles": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Filter specific agent roles (e.g. [\"sdd-apply\", \"sdd-verify\"]). Omit for all roles.",
+			},
+		},
+	}
+}
+
+func registerRecommendConfig(server *mcp.Server, client *api.Client) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "recommend_config",
+		Title: "Recommend Configuration",
+		Description: `Recommends the best model for each agent role based on your configured providers and model benchmarks.
+
+Detects which API keys are configured (OPENCODE_API_KEY, OPENROUTER_API_KEY),
+lists available models from your subscriptions, cross-references with OpenRouter
+benchmarks, and recommends the optimal model per agent role using quality/price ratio.
+
+Agent roles evaluated:
+1. Orchestrator (CRÍTICO) - routing, instruction following
+2. SDD agents: init, onboard, explore, propose, spec, design, tasks, apply, verify, archive
+3. Review (4R): risk, readability, reliability, resilience, refuter
+4. Judgment Day: judge-a, judge-b, fix-agent
+
+Pass specific roles to filter recommendations. Omit for the complete set.`,
+		InputSchema: recommendConfigSchema(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in recommendConfigInput) (*mcp.CallToolResult, any, error) {
+		providers, recs, err := api.RecommendConfig(ctx, client, in.Roles)
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+
+		text := api.FormatRecommendations(providers, recs)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		}, nil, nil
+	})
 }
