@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -371,29 +372,69 @@ func updateBinary(version string) error {
 		return err
 	}
 
-	// Create temp file
-	tmpFile, err := os.CreateTemp("", "model-advisor-update-*")
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "model-advisor-update-*")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpFile.Name())
+	defer os.RemoveAll(tmpDir)
 
-	// For now, just download the raw binary (simplified)
-	// In production, you'd extract from tar.gz/zip
-	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+	// Save archive
+	archivePath := filepath.Join(tmpDir, filename)
+	archiveFile, err := os.Create(archivePath)
+	if err != nil {
 		return err
 	}
-	tmpFile.Close()
+	if _, err := io.Copy(archiveFile, resp.Body); err != nil {
+		archiveFile.Close()
+		return err
+	}
+	archiveFile.Close()
+
+	// Extract archive
+	if osName == "windows" {
+		// Use PowerShell to extract zip
+		cmd := exec.Command("powershell", "-Command", fmt.Sprintf("Expand-Archive -Path '%s' -DestinationPath '%s' -Force", archivePath, tmpDir))
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("error extrayendo zip: %w", err)
+		}
+	} else {
+		// Use tar for unix
+		cmd := exec.Command("tar", "-xzf", archivePath, "-C", tmpDir)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("error extrayendo tar.gz: %w", err)
+		}
+	}
+
+	// Find the binary in extracted files
+	binaryName := "server"
+	if osName == "windows" {
+		binaryName += ".exe"
+	}
+
+	var extractedBinary string
+	err = filepath.Walk(tmpDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Name() == binaryName {
+			extractedBinary = path
+		}
+		return nil
+	})
+	if err != nil || extractedBinary == "" {
+		return fmt.Errorf("binario no encontrado en el archivo")
+	}
 
 	// Make executable (Unix)
 	if osName != "windows" {
-		if err := os.Chmod(tmpFile.Name(), 0755); err != nil {
+		if err := os.Chmod(extractedBinary, 0755); err != nil {
 			return err
 		}
 	}
 
 	// Replace current binary
-	if err := os.Rename(tmpFile.Name(), currentPath); err != nil {
+	if err := os.Rename(extractedBinary, currentPath); err != nil {
 		return fmt.Errorf("error reemplazando binario: %w", err)
 	}
 
