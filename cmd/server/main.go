@@ -1,0 +1,306 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/signal"
+	"strings"
+
+	"github.com/AlonsoSG0/model-advisor-mcp/internal/api"
+	"github.com/AlonsoSG0/model-advisor-mcp/internal/guide"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("server fatal error", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	var (
+		ocKey string
+		orKey string
+	)
+	flag.StringVar(&ocKey, "opencode-api-key", "", "OpenCode API key (required)")
+	flag.StringVar(&orKey, "openrouter-api-key", "", "OpenRouter API key (optional)")
+	flag.Parse()
+
+	if strings.TrimSpace(ocKey) == "" {
+		return errors.New("-opencode-api-key is required")
+	}
+
+	client := api.NewClient(nil, ocKey, orKey)
+
+	server := mcp.NewServer(&mcp.Implementation{
+		Name:    "model-advisor",
+		Version: "1.0.0",
+		Title:   "Model Advisor MCP Server",
+	}, &mcp.ServerOptions{
+		Instructions: "Agent-Model Recommendation Advisor. Fetches available models from OpenCode subscriptions and OpenRouter benchmarks, reads agent selection criteria from the Gentle AI guide, and helps recommend the best model for each agent/sub-agent.",
+		InitializedHandler: func(context.Context, *mcp.InitializedRequest) {
+			// Log AFTER the JSON-RPC handshake completes — stderr before this point
+			// breaks MCP clients.
+			slog.Info("model-advisor ready")
+		},
+	})
+
+	registerListModels(server, client)
+	registerGetAgentCriteria(server)
+	registerGetModelBenchmarks(server, client)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
+}
+
+type listModelsInput struct {
+	Subscription string `json:"subscription"`
+	Enrich       bool   `json:"enrich"`
+}
+
+func listModelsSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"subscription": map[string]any{
+				"type":        "string",
+				"enum":        []string{"go", "zen", "both"},
+				"default":     "both",
+				"description": "Which OpenCode subscription(s) to query: go (paid), zen (free), or both",
+			},
+			"enrich": map[string]any{
+				"type":        "boolean",
+				"default":     true,
+				"description": "Cross-reference with OpenRouter for benchmarks and pricing",
+			},
+		},
+	}
+}
+
+func registerListModels(server *mcp.Server, client *api.Client) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "list_available_models",
+		Title:       "List Available Models",
+		Description: `Fetch all available AI models from your OpenCode subscriptions (Go and/or Zen), cross-referenced with OpenRouter benchmarks when available.`,
+		InputSchema: listModelsSchema(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listModelsInput) (*mcp.CallToolResult, any, error) {
+		models, err := client.ListModels(ctx, in.Subscription, in.Enrich)
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+
+		summary := buildModelSummary(models)
+		text, err := json.MarshalIndent(summary, "", "  ")
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(text)}},
+		}, nil, nil
+	})
+}
+
+func buildModelSummary(models []api.EnrichedModel) map[string]any {
+	var (
+		withReasoning     []api.EnrichedModel
+		withEffort        []api.EnrichedModel
+		withToggle        []api.EnrichedModel
+		withBenchmarks    int
+		withoutBenchmarks int
+	)
+	for _, m := range models {
+		if m.Reasoning != nil {
+			withReasoning = append(withReasoning, m)
+			if len(m.Reasoning.SupportedEfforts) > 0 {
+				withEffort = append(withEffort, m)
+			} else {
+				withToggle = append(withToggle, m)
+			}
+		}
+		if m.Benchmarks.Intelligence != nil {
+			withBenchmarks++
+		} else {
+			withoutBenchmarks++
+		}
+	}
+
+	return map[string]any{
+		"total": len(models),
+		"bySubscription": map[string]int{
+			"go":   countBySubscription(models, "go"),
+			"zen":  countBySubscription(models, "zen"),
+			"both": countBySubscription(models, "both"),
+		},
+		"withBenchmarks":    withBenchmarks,
+		"withoutBenchmarks": withoutBenchmarks,
+		"reasoning": map[string]int{
+			"withEffortLevels": len(withEffort),
+			"withToggleOnly":   len(withToggle),
+			"none":             len(models) - len(withReasoning),
+		},
+		"models": models,
+	}
+}
+
+func countBySubscription(models []api.EnrichedModel, sub string) int {
+	count := 0
+	for _, m := range models {
+		switch sub {
+		case "go":
+			if m.Subscription == "go" || m.Subscription == "both" {
+				count++
+			}
+		case "zen":
+			if m.Subscription == "zen" || m.Subscription == "both" {
+				count++
+			}
+		case "both":
+			if m.Subscription == "both" {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+type getAgentCriteriaInput struct {
+	Agent string `json:"agent"`
+}
+
+func getAgentCriteriaSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"agent": map[string]any{
+				"type":        "string",
+				"description": "Agent ID to filter by (e.g. 'sdd-apply', 'gentle-orchestrator', 'review-risk', 'jd-judge-a'). Omit to get the full guide.",
+			},
+		},
+	}
+}
+
+func registerGetAgentCriteria(server *mcp.Server) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_agent_criteria",
+		Title:       "Get Agent Criteria",
+		Description: `Read the Gentle AI agent selection criteria from guia_gentle_ai.md. Each agent section defines what the agent does and its selection criteria. Use this to understand WHAT each agent needs BEFORE picking a model. Pass an agent ID to get only that agent's criteria.`,
+		InputSchema: getAgentCriteriaSchema(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getAgentCriteriaInput) (*mcp.CallToolResult, any, error) {
+		content, err := guide.Extract(in.Agent)
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: content}},
+		}, nil, nil
+	})
+}
+
+type getModelBenchmarksInput struct {
+	Query string `json:"query"`
+}
+
+func getModelBenchmarksSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{
+				"type":        "string",
+				"description": "Model ID or name to search for (e.g. 'deepseek-v4-pro', 'kimi', 'qwen3.7')",
+			},
+		},
+	}
+}
+
+func registerGetModelBenchmarks(server *mcp.Server, client *api.Client) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "get_model_benchmarks",
+		Title:       "Get Model Benchmarks",
+		Description: `Search OpenRouter for detailed benchmarks and pricing for a specific model. Use this when you need deeper data on a particular model beyond what list_available_models returns.`,
+		InputSchema: getModelBenchmarksSchema(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getModelBenchmarksInput) (*mcp.CallToolResult, any, error) {
+		models, err := client.ListORModels(ctx, in.Query)
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+
+		if len(models) == 0 {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf(`No models found matching %q on OpenRouter.`, in.Query)}},
+			}, nil, nil
+		}
+
+		results := make([]map[string]any, 0, len(models))
+		for _, m := range models {
+			contextLength := m.ContextLength
+			if contextLength == nil && m.TopProvider != nil {
+				contextLength = m.TopProvider.ContextLength
+			}
+
+			var pricing map[string]float64
+			if m.Pricing != nil {
+				pricing = map[string]float64{
+					"input_per_1M":  parseMoney(m.Pricing.Prompt) * 1_000_000,
+					"output_per_1M": parseMoney(m.Pricing.Completion) * 1_000_000,
+				}
+			}
+
+			var benchmarks map[string]*float64
+			if m.Benchmarks != nil && m.Benchmarks.ArtificialAnalysis != nil {
+				aa := m.Benchmarks.ArtificialAnalysis
+				benchmarks = map[string]*float64{
+					"intelligence_index": aa.IntelligenceIndex,
+					"coding_index":       aa.CodingIndex,
+					"agentic_index":      aa.AgenticIndex,
+				}
+			}
+
+			results = append(results, map[string]any{
+				"id":             m.ID,
+				"name":           m.Name,
+				"context_length": contextLength,
+				"pricing":        pricing,
+				"benchmarks":     benchmarks,
+			})
+		}
+
+		text, err := json.MarshalIndent(map[string]any{
+			"query":   in.Query,
+			"count":   len(results),
+			"results": results,
+		}, "", "  ")
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: string(text)}},
+		}, nil, nil
+	})
+}
+
+func parseMoney(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	var v float64
+	_, _ = fmt.Sscanf(s, "%f", &v)
+	return v
+}
+
+func errorResult(err error) *mcp.CallToolResult {
+	return &mcp.CallToolResult{
+		IsError: true,
+		Content: []mcp.Content{&mcp.TextContent{Text: "Error: " + err.Error()}},
+	}
+}
