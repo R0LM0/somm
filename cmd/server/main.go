@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -26,7 +27,18 @@ func main() {
 }
 
 func run() error {
-	// Load .env file if present (silent ignore if missing)
+	// Load .env file from binary's directory (silent ignore if missing)
+	if exe, err := os.Executable(); err == nil {
+		envPath := filepath.Join(filepath.Dir(exe), ".env")
+		if envMap, readErr := godotenv.Read(envPath); readErr == nil {
+			for k, v := range envMap {
+				if os.Getenv(k) == "" {
+					os.Setenv(k, v)
+				}
+			}
+		}
+	}
+	// Also try current directory as fallback
 	_ = godotenv.Load()
 
 	var (

@@ -109,8 +109,9 @@ func TestServerRequiresOpenCodeKey(t *testing.T) {
 	}
 
 	cmd := exec.Command(binary)
-	cmd.Dir = repoRoot
+	cmd.Dir = t.TempDir() // Run in temp dir without .env
 	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=", "OPENROUTER_API_KEY=")
 
 	err = cmd.Run()
 	if err == nil {
