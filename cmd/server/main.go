@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/AlonsoSG0/model-advisor-mcp/internal/api"
 	"github.com/AlonsoSG0/model-advisor-mcp/internal/guide"
@@ -18,7 +19,7 @@ import (
 
 func main() {
 	if err := run(); err != nil {
-		slog.Error("server fatal error", "error", err)
+		fmt.Fprintf(os.Stderr, "[model-advisor] Fatal error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -28,8 +29,8 @@ func run() error {
 		ocKey string
 		orKey string
 	)
-	flag.StringVar(&ocKey, "opencode-api-key", "", "OpenCode API key (required)")
-	flag.StringVar(&orKey, "openrouter-api-key", "", "OpenRouter API key (optional)")
+	flag.StringVar(&ocKey, "opencode-api-key", os.Getenv("OPENCODE_API_KEY"), "OpenCode API key (required)")
+	flag.StringVar(&orKey, "openrouter-api-key", os.Getenv("OPENROUTER_API_KEY"), "OpenRouter API key (optional)")
 	flag.Parse()
 
 	if strings.TrimSpace(ocKey) == "" {
@@ -55,7 +56,7 @@ func run() error {
 	registerGetAgentCriteria(server)
 	registerGetModelBenchmarks(server, client)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil && !errors.Is(err, context.Canceled) {
@@ -90,9 +91,20 @@ func listModelsSchema() map[string]any {
 
 func registerListModels(server *mcp.Server, client *api.Client) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "list_available_models",
-		Title:       "List Available Models",
-		Description: `Fetch all available AI models from your OpenCode subscriptions (Go and/or Zen), cross-referenced with OpenRouter benchmarks when available.`,
+		Name:  "list_available_models",
+		Title: "List Available Models",
+		Description: `Fetch all available AI models from your OpenCode subscriptions (Go and/or Zen),
+cross-referenced with OpenRouter benchmarks when available.
+
+Returns for each model:
+- ID, name, provider
+- Which subscription(s) it belongs to (go, zen, or both)
+- Pricing per 1M tokens (input/output) — from OpenRouter
+- Context length (max tokens)
+- Benchmarks: intelligence_index, coding_index, agentic_index (Artificial Analysis)
+- Reasoning: available effort levels (e.g. ["xhigh","high"]) and default — when the model supports reasoning_effort
+
+Use this tool FIRST to understand what models are available before making recommendations.`,
 		InputSchema: listModelsSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listModelsInput) (*mcp.CallToolResult, any, error) {
 		models, err := client.ListModels(ctx, in.Subscription, in.Enrich)
@@ -192,14 +204,30 @@ func getAgentCriteriaSchema() map[string]any {
 
 func registerGetAgentCriteria(server *mcp.Server) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_agent_criteria",
-		Title:       "Get Agent Criteria",
-		Description: `Read the Gentle AI agent selection criteria from guia_gentle_ai.md. Each agent section defines what the agent does and its selection criteria. Use this to understand WHAT each agent needs BEFORE picking a model. Pass an agent ID to get only that agent's criteria.`,
+		Name:  "get_agent_criteria",
+		Title: "Get Agent Criteria",
+		Description: `Read the Gentle AI agent selection criteria from guia_gentle_ai.md.
+
+Each agent section defines:
+- What the agent does (description)
+- CRITERIOS DE SELECCIÓN: what qualities the model needs (context, reasoning, speed, cost, etc.)
+- Razonamiento para la selección: why certain tradeoffs matter
+
+Use this to understand WHAT each agent needs BEFORE picking a model.
+Pass an agent ID to get only that agent's criteria.
+
+AGENT GROUPS (display recommendations in this order):
+1. Orchestrator: gentle-orchestrator
+2. SDD agents: sdd-init, sdd-onboard, sdd-explore, sdd-propose, sdd-spec, sdd-design, sdd-tasks, sdd-apply, sdd-verify, sdd-archive
+3. Review (4R): review-risk, review-readability, review-reliability, review-resilience, review-refuter
+4. Judgment Day: jd-judge-a, jd-judge-b, jd-fix-agent`,
 		InputSchema: getAgentCriteriaSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getAgentCriteriaInput) (*mcp.CallToolResult, any, error) {
 		content, err := guide.Extract(in.Agent)
 		if err != nil {
-			return errorResult(err), nil, nil
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
+			}, nil, nil
 		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: content}},
@@ -213,7 +241,8 @@ type getModelBenchmarksInput struct {
 
 func getModelBenchmarksSchema() map[string]any {
 	return map[string]any{
-		"type": "object",
+		"type":     "object",
+		"required": []string{"query"},
 		"properties": map[string]any{
 			"query": map[string]any{
 				"type":        "string",
@@ -225,9 +254,12 @@ func getModelBenchmarksSchema() map[string]any {
 
 func registerGetModelBenchmarks(server *mcp.Server, client *api.Client) {
 	mcp.AddTool(server, &mcp.Tool{
-		Name:        "get_model_benchmarks",
-		Title:       "Get Model Benchmarks",
-		Description: `Search OpenRouter for detailed benchmarks and pricing for a specific model. Use this when you need deeper data on a particular model beyond what list_available_models returns.`,
+		Name:  "get_model_benchmarks",
+		Title: "Get Model Benchmarks",
+		Description: `Search OpenRouter for detailed benchmarks and pricing for a specific model.
+Use this when you need deeper data on a particular model beyond what list_available_models returns.
+
+Returns: model ID, name, pricing, context length, and artificial_analysis benchmarks.`,
 		InputSchema: getModelBenchmarksSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getModelBenchmarksInput) (*mcp.CallToolResult, any, error) {
 		models, err := client.ListORModels(ctx, in.Query)

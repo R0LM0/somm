@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -118,23 +119,31 @@ func (c *Client) ListModels(ctx context.Context, subscription string, enrich boo
 	}
 
 	var goModels, zenModels []OCModel
+	var goErr, zenErr error
 	var wg sync.WaitGroup
 
 	if subscription == "go" || subscription == "both" {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			goModels, _ = c.fetchOC(ctx, ocGoURL, "Go")
+			goModels, goErr = c.fetchOC(ctx, ocGoURL, "Go")
 		}()
 	}
 	if subscription == "zen" || subscription == "both" {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			zenModels, _ = c.fetchOC(ctx, ocZenURL, "Zen")
+			zenModels, zenErr = c.fetchOC(ctx, ocZenURL, "Zen")
 		}()
 	}
 	wg.Wait()
+
+	if goErr != nil {
+		slog.Error("OC Go fetch failed", "subscription", "go", "error", goErr)
+	}
+	if zenErr != nil {
+		slog.Error("OC Zen fetch failed", "subscription", "zen", "error", zenErr)
+	}
 
 	seen := make(map[string]*EnrichedModel)
 

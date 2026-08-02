@@ -114,8 +114,12 @@ func enrichWithOpenRouter(enriched []EnrichedModel, orModels []ORModel) {
 			if match.Reasoning.DefaultEnabled != nil {
 				defaultEnabled = *match.Reasoning.DefaultEnabled
 			}
+			supportedEfforts := match.Reasoning.SupportedEfforts
+			if supportedEfforts == nil {
+				supportedEfforts = []string{}
+			}
 			model.Reasoning = &ModelReasoning{
-				SupportedEfforts: match.Reasoning.SupportedEfforts,
+				SupportedEfforts: supportedEfforts,
 				DefaultEffort:    match.Reasoning.DefaultEffort,
 				Mandatory:        mandatory,
 				DefaultEnabled:   defaultEnabled,
