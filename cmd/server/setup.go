@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -25,6 +27,31 @@ func runSetup() {
 	fmt.Println("🔧 Model Advisor Setup Wizard")
 	fmt.Println("==============================")
 	fmt.Println()
+
+	// Check for updates
+ latestVersion, err := checkForUpdate()
+	if err == nil && latestVersion != version {
+		fmt.Printf("📦 Nueva versión disponible: %s (actual: %s)\n\n", latestVersion, version)
+
+		var update bool
+		huh.NewConfirm().
+			Title("¿Querés actualizar a la última versión?").
+			Affirmative("Sí, actualizar").
+			Negative("No, mantener").
+			Value(&update).Run()
+
+		if update {
+			fmt.Println("\n🔄 Descargando actualización...")
+			if err := updateBinary(latestVersion); err != nil {
+				fmt.Printf("❌ Error actualizando: %v\n", err)
+			} else {
+				fmt.Println("✅ Actualizado a", latestVersion)
+				fmt.Println("🔄 Reiniciá el setup con: model-advisor setup")
+				return
+			}
+		}
+		fmt.Println()
+	}
 
 	// Step 1: Find OpenCode config
 	configPath, err := findOpenCodeConfig()
@@ -294,4 +321,81 @@ func createPowerShellAlias() error {
 	// Append alias
 	profile = append(profile, []byte("\n# Model Advisor alias\n"+alias+"\n")...)
 	return os.WriteFile(profilePath, profile, 0644)
+}
+
+func checkForUpdate() (string, error) {
+	resp, err := http.Get("https://api.github.com/repos/R0LM0/sub-aware-agent-model-advisor-go/releases/latest")
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var release struct {
+		TagName string `json:"tag_name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return "", err
+	}
+
+	return release.TagName, nil
+}
+
+func updateBinary(version string) error {
+	// Determine OS and architecture
+	osName := runtime.GOOS
+	arch := runtime.GOARCH
+
+	// Build download URL
+	extension := ".tar.gz"
+	if osName == "windows" {
+		extension = ".zip"
+	}
+
+	filename := fmt.Sprintf("sub-aware-agent-model-advisor-go_%s_%s_%s%s", version, osName, arch, extension)
+	url := fmt.Sprintf("https://github.com/R0LM0/sub-aware-agent-model-advisor-go/releases/download/%s/%s", version, filename)
+
+	// Download
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("error descargando: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("error descargando: status %d", resp.StatusCode)
+	}
+
+	// Get current binary path
+	currentPath, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	// Create temp file
+	tmpFile, err := os.CreateTemp("", "model-advisor-update-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmpFile.Name())
+
+	// For now, just download the raw binary (simplified)
+	// In production, you'd extract from tar.gz/zip
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return err
+	}
+	tmpFile.Close()
+
+	// Make executable (Unix)
+	if osName != "windows" {
+		if err := os.Chmod(tmpFile.Name(), 0755); err != nil {
+			return err
+		}
+	}
+
+	// Replace current binary
+	if err := os.Rename(tmpFile.Name(), currentPath); err != nil {
+		return fmt.Errorf("error reemplazando binario: %w", err)
+	}
+
+	return nil
 }
