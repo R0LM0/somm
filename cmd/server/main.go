@@ -77,6 +77,7 @@ func run() error {
 	registerListModels(server, client)
 	registerGetAgentCriteria(server)
 	registerGetModelBenchmarks(server, client)
+	registerCompareModels(server, client)
 	registerRecommendConfig(server, client)
 	registerValidateConfig(server, client)
 
@@ -341,6 +342,54 @@ Returns: model ID, name, pricing, context length, and artificial_analysis benchm
 		}
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: string(text)}},
+		}, nil, nil
+	})
+}
+
+type compareModelsInput struct {
+	ModelIDs []string `json:"model_ids"`
+}
+
+func compareModelsSchema() map[string]any {
+	return map[string]any{
+		"type":     "object",
+		"required": []string{"model_ids"},
+		"properties": map[string]any{
+			"model_ids": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"minItems":    2,
+				"maxItems":    4,
+				"description": "2-4 OpenRouter model IDs to compare (e.g. [\"deepseek/deepseek-v4-pro\", \"moonshotai/kimi-k3\"])",
+			},
+		},
+	}
+}
+
+func registerCompareModels(server *mcp.Server, client *api.Client) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "compare_models",
+		Title: "Compare Models",
+		Description: `Compare 2-4 models side-by-side with benchmarks and pricing from OpenRouter.
+
+Returns a comparison table with:
+- Intelligence, Coding, and Agentic indices
+- Input and output pricing per 1M tokens
+- Context length
+- Supported reasoning effort levels
+- Winner recommendations by category (best coding, best price, best balance, best intelligence, best agentic)
+
+Use this to evaluate tradeoffs between specific models before recommending one for a role.`,
+		InputSchema: compareModelsSchema(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in compareModelsInput) (*mcp.CallToolResult, any, error) {
+		result, err := api.CompareModels(ctx, client, in.ModelIDs)
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+
+		text := api.FormatComparison(result)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
 		}, nil, nil
 	})
 }
