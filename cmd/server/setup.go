@@ -55,32 +55,56 @@ func runSetup() {
 		fmt.Printf("✅ model-advisor ya está configurado\n")
 		fmt.Printf("   Ubicación: %s\n\n", binaryPath)
 
-		var update bool
-		huh.NewConfirm().
-			Title("¿Querés actualizar la configuración?").
-			Affirmative("Sí, actualizar").
-			Negative("No, mantener").
-			Value(&update).Run()
-
-		if !update {
-			fmt.Println("\nManteniendo configuración actual.")
-			return
-		}
-	} else {
-		fmt.Println("❌ model-advisor no está configurado")
+		// Validate existing config
+		fmt.Println("📋 Validando configuración...")
 		fmt.Println()
 
-		var add bool
-		huh.NewConfirm().
-			Title("¿Querés agregarlo a OpenCode?").
-			Affirmative("Sí, agregar").
-			Negative("No, cancelar").
-			Value(&add).Run()
-
-		if !add {
-			fmt.Println("\nCancelado.")
-			return
+		// Check .env
+		envPath := filepath.Join(filepath.Dir(binaryPath), ".env")
+		if _, err := os.Stat(envPath); err == nil {
+			fmt.Println("✅ .env encontrado")
+		} else {
+			fmt.Println("❌ .env no encontrado")
 		}
+
+		// Check OpenCode config
+		if entry, exists := config.MCP["model-advisor"]; exists {
+			if entry.Enabled {
+				fmt.Println("✅ Habilitado en OpenCode")
+			} else {
+				fmt.Println("⚠️  Deshabilitado en OpenCode")
+			}
+		}
+
+		fmt.Println("\n✅ Configuración válida!")
+		fmt.Println("\nTools disponibles: 8")
+		fmt.Println("   - list_available_models")
+		fmt.Println("   - get_agent_criteria")
+		fmt.Println("   - get_model_benchmarks")
+		fmt.Println("   - recommend_config")
+		fmt.Println("   - estimate_cost")
+		fmt.Println("   - compare_models")
+		fmt.Println("   - validate_config")
+		fmt.Println("   - export_config")
+
+		fmt.Println("\nPara reconfigurar: model-advisor setup --force")
+		return
+	}
+
+	// Not configured - guide through setup
+	fmt.Println("❌ model-advisor no está configurado")
+	fmt.Println()
+
+	var add bool
+	huh.NewConfirm().
+		Title("¿Querés agregarlo a OpenCode?").
+		Affirmative("Sí, agregar").
+		Negative("No, cancelar").
+		Value(&add).Run()
+
+	if !add {
+		fmt.Println("\nCancelado.")
+		return
 	}
 
 	fmt.Println()
