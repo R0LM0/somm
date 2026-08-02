@@ -158,6 +158,16 @@ func runSetup() {
 	fmt.Println("\n==============================")
 	fmt.Println("✅ Configuración completada!")
 	fmt.Println("==============================")
+
+	// Create PowerShell alias
+	if err := createPowerShellAlias(); err != nil {
+		fmt.Printf("⚠️  No se pudo crear alias automático: %v\n", err)
+		fmt.Println("Creá manualmente: function msetup { model-advisor setup }")
+	} else {
+		fmt.Println("\n✅ Alias creado: msetup")
+		fmt.Println("   Reiniciá PowerShell para usarlo")
+	}
+
 	fmt.Println("\nPróximos pasos:")
 	fmt.Println("1. Reiniciá OpenCode")
 	fmt.Println("2. Abrí una nueva sesión")
@@ -223,4 +233,41 @@ func findBinary() (string, error) {
 	}
 
 	return "", fmt.Errorf("binario no encontrado en %s", filepath.Join(gopath, "bin"))
+}
+
+func createPowerShellAlias() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	// PowerShell profile path
+	profilePath := filepath.Join(home, "Documents", "PowerShell", "Microsoft.PowerShell_profile.ps1")
+
+	// Check if profile exists, create if not
+	if _, err := os.Stat(profilePath); os.IsNotExist(err) {
+		profileDir := filepath.Dir(profilePath)
+		if err := os.MkdirAll(profileDir, 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(profilePath, []byte("# PowerShell Profile\n"), 0644); err != nil {
+			return err
+		}
+	}
+
+	// Read existing profile
+	profile, err := os.ReadFile(profilePath)
+	if err != nil {
+		return err
+	}
+
+	// Check if alias already exists
+	alias := "function msetup { model-advisor setup }"
+	if strings.Contains(string(profile), "msetup") {
+		return nil // Already exists
+	}
+
+	// Append alias
+	profile = append(profile, []byte("\n# Model Advisor alias\n"+alias+"\n")...)
+	return os.WriteFile(profilePath, profile, 0644)
 }
