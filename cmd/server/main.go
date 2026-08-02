@@ -26,6 +26,12 @@ var (
 )
 
 func main() {
+	// Check for setup subcommand
+	if len(os.Args) > 1 && os.Args[1] == "setup" {
+		runSetup()
+		return
+	}
+
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "[model-advisor] Fatal error: %v\n", err)
 		os.Exit(1)
