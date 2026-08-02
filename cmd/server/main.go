@@ -78,6 +78,7 @@ func run() error {
 	registerGetAgentCriteria(server)
 	registerGetModelBenchmarks(server, client)
 	registerRecommendConfig(server, client)
+	registerValidateConfig(server, client)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -358,6 +359,41 @@ func errorResult(err error) *mcp.CallToolResult {
 		IsError: true,
 		Content: []mcp.Content{&mcp.TextContent{Text: "Error: " + err.Error()}},
 	}
+}
+
+type validateConfigInput struct{}
+
+func validateConfigSchema() map[string]any {
+	return map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+	}
+}
+
+func registerValidateConfig(server *mcp.Server, client *api.Client) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "validate_config",
+		Title: "Validate Configuration",
+		Description: `Analyzes your current MCP server configuration and checks if it's optimal.
+
+Detects configured API providers, lists available models, and evaluates
+whether the current setup provides the best quality/price for each agent role.
+Returns a configuration score and concrete improvement suggestions.
+
+Use this to quickly assess if your setup is complete or if adding more
+API keys would improve recommendations.`,
+		InputSchema: validateConfigSchema(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in validateConfigInput) (*mcp.CallToolResult, any, error) {
+		result, err := api.ValidateConfig(ctx, client)
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+
+		text := api.FormatValidation(result)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		}, nil, nil
+	})
 }
 
 type recommendConfigInput struct {
