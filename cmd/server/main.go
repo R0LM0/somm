@@ -19,6 +19,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "[model-advisor] Fatal error: %v\n", err)
@@ -57,7 +63,7 @@ func run() error {
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "model-advisor",
-		Version: "1.0.0",
+		Version: version,
 		Title:   "Model Advisor MCP Server",
 	}, &mcp.ServerOptions{
 		Instructions: "Agent-Model Recommendation Advisor. Fetches available models from OpenCode subscriptions and OpenRouter benchmarks, reads agent selection criteria from the Gentle AI guide, and helps recommend the best model for each agent/sub-agent.",
