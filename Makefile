@@ -1,3 +1,5 @@
+# IMPORTANT: When adding new features, update README.md accordingly
+
 BINARY     := model-advisor
 MODULE     := ./cmd/server
 
