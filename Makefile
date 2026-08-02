@@ -10,7 +10,7 @@ LDFLAGS    := -s -w \
               -X main.commit=$(COMMIT) \
               -X main.date=$(DATE)
 
-.PHONY: all build test lint install cross-compile clean fmt tidy
+.PHONY: all build test lint install cross-compile release-dryrun clean fmt tidy
 
 all: fmt tidy lint test build
 
@@ -36,6 +36,9 @@ cross-compile:
 	GOOS=darwin  GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-darwin-amd64  $(MODULE)
 	GOOS=darwin  GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-darwin-arm64  $(MODULE)
 	GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BINARY)-windows-amd64.exe $(MODULE)
+
+release-dryrun:
+	goreleaser release --snapshot --clean
 
 clean:
 	rm -f $(BINARY) $(BINARY)-linux-amd64 $(BINARY)-linux-arm64 \
