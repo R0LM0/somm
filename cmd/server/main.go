@@ -80,6 +80,7 @@ func run() error {
 	registerCompareModels(server, client)
 	registerRecommendConfig(server, client)
 	registerValidateConfig(server, client)
+	registerExportConfig(server, client)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -439,6 +440,50 @@ API keys would improve recommendations.`,
 		}
 
 		text := api.FormatValidation(result)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: text}},
+		}, nil, nil
+	})
+}
+
+type exportConfigInput struct {
+	Roles []string `json:"roles"`
+}
+
+func exportConfigSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"roles": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Filter specific roles (optional)",
+			},
+		},
+	}
+}
+
+func registerExportConfig(server *mcp.Server, client *api.Client) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name:  "export_config",
+		Title: "Export Configuration",
+		Description: `Export recommended model configuration to opencode.json format (SAFE: only updates model field).
+
+Reads your existing opencode.json, generates model recommendations,
+and returns an updated JSON with ONLY the "model" field changed per agent.
+All other config (prompts, tools, permissions) is preserved.
+
+This tool NEVER writes to disk. It returns the JSON for you to review and apply manually.
+
+Use this after recommend_config to get a ready-to-paste opencode.json.`,
+		InputSchema: exportConfigSchema(),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in exportConfigInput) (*mcp.CallToolResult, any, error) {
+		result, err := api.ExportConfig(ctx, client, "", in.Roles)
+		if err != nil {
+			return errorResult(err), nil, nil
+		}
+
+		text := api.FormatExportResult(result)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{&mcp.TextContent{Text: text}},
 		}, nil, nil
