@@ -7,9 +7,10 @@ import (
 	"strings"
 )
 
-// BuildOpenRouterHeaders returns the request headers for an OpenRouter call.
-// When apiKey is non-empty an Authorization Bearer header is added; otherwise
-// no Authorization header is present.
+// BuildOpenRouterHeaders constructs HTTP headers for an OpenRouter API call.
+// When apiKey is non-empty an Authorization Bearer header is included.
+// Used internally by fetchOpenRouter and available for external callers
+// that need to build signed OpenRouter requests.
 func BuildOpenRouterHeaders(apiKey string) http.Header {
 	h := make(http.Header)
 	if apiKey != "" {
@@ -85,8 +86,8 @@ func enrichWithOpenRouter(enriched []EnrichedModel, orModels []ORModel) {
 
 		if match.Pricing != nil {
 			model.Pricing = &Money{
-				Prompt:     parseMoney(match.Pricing.Prompt),
-				Completion: parseMoney(match.Pricing.Completion),
+				Prompt:     ParseMoney(match.Pricing.Prompt),
+				Completion: ParseMoney(match.Pricing.Completion),
 			}
 		}
 
@@ -128,7 +129,9 @@ func enrichWithOpenRouter(enriched []EnrichedModel, orModels []ORModel) {
 	}
 }
 
-func parseMoney(s string) float64 {
+// ParseMoney converts a string like "0.000015" to a float64.
+// Returns 0 for empty or invalid strings.
+func ParseMoney(s string) float64 {
 	if s == "" {
 		return 0
 	}

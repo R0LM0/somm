@@ -94,10 +94,10 @@ func availableAgents(lines []string) []string {
 	seen := make(map[string]bool)
 	var agents []string
 	for _, line := range lines {
-		if !strings.HasPrefix(line, "### ") {
+		if !isHeading(line) {
 			continue
 		}
-		name := strings.TrimSpace(line[4:])
+		name := headingText(line)
 		if name == "" || seen[name] {
 			continue
 		}

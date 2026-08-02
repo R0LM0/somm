@@ -51,6 +51,8 @@ func run() error {
 		ocKey string
 		orKey string
 	)
+	// NOTE: API keys passed via CLI flags are visible in process listings (ps aux).
+	// Prefer setting them via environment variables or .env file instead.
 	flag.StringVar(&ocKey, "opencode-api-key", os.Getenv("OPENCODE_API_KEY"), "OpenCode API key (required)")
 	flag.StringVar(&orKey, "openrouter-api-key", os.Getenv("OPENROUTER_API_KEY"), "OpenRouter API key (optional)")
 	flag.Parse()
@@ -310,8 +312,8 @@ Returns: model ID, name, pricing, context length, and artificial_analysis benchm
 			var pricing map[string]float64
 			if m.Pricing != nil {
 				pricing = map[string]float64{
-					"input_per_1M":  parseMoney(m.Pricing.Prompt) * 1_000_000,
-					"output_per_1M": parseMoney(m.Pricing.Completion) * 1_000_000,
+					"input_per_1M":  api.ParseMoney(m.Pricing.Prompt) * 1_000_000,
+					"output_per_1M": api.ParseMoney(m.Pricing.Completion) * 1_000_000,
 				}
 			}
 
@@ -394,15 +396,6 @@ Use this to evaluate tradeoffs between specific models before recommending one f
 			Content: []mcp.Content{&mcp.TextContent{Text: text}},
 		}, nil, nil
 	})
-}
-
-func parseMoney(s string) float64 {
-	if s == "" {
-		return 0
-	}
-	var v float64
-	_, _ = fmt.Sscanf(s, "%f", &v)
-	return v
 }
 
 func errorResult(err error) *mcp.CallToolResult {

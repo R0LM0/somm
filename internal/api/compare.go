@@ -85,8 +85,8 @@ func extractComparison(targetID string, orModels []ORModel) (*ModelComparison, e
 
 	// Extract pricing (per 1M tokens).
 	if match.Pricing != nil {
-		inputPer1M := parseMoney(match.Pricing.Prompt) * 1_000_000
-		outputPer1M := parseMoney(match.Pricing.Completion) * 1_000_000
+		inputPer1M := ParseMoney(match.Pricing.Prompt) * 1_000_000
+		outputPer1M := ParseMoney(match.Pricing.Completion) * 1_000_000
 		mc.PriceInput = &inputPer1M
 		mc.PriceOutput = &outputPer1M
 	}
@@ -156,13 +156,15 @@ func determineWinners(comparisons []ModelComparison) map[string]string {
 // findHighest returns the model with the highest value from the accessor.
 func findHighest(comparisons []ModelComparison, accessor func(ModelComparison) *float64) *ModelComparison {
 	var best *ModelComparison
+	var bestVal float64
 	for i := range comparisons {
 		v := accessor(comparisons[i])
 		if v == nil {
 			continue
 		}
-		if best == nil || *accessor(*best) < *v {
+		if best == nil || *v > bestVal {
 			best = &comparisons[i]
+			bestVal = *v
 		}
 	}
 	return best
@@ -171,13 +173,15 @@ func findHighest(comparisons []ModelComparison, accessor func(ModelComparison) *
 // findLowest returns the model with the lowest value from the accessor.
 func findLowest(comparisons []ModelComparison, accessor func(ModelComparison) *float64) *ModelComparison {
 	var best *ModelComparison
+	var bestVal float64
 	for i := range comparisons {
 		v := accessor(comparisons[i])
 		if v == nil {
 			continue
 		}
-		if best == nil || *accessor(*best) > *v {
+		if best == nil || *v < bestVal {
 			best = &comparisons[i]
+			bestVal = *v
 		}
 	}
 	return best

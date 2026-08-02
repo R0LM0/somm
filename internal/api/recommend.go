@@ -3,10 +3,12 @@ package api
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 )
+
+// maxScorePoints is the scale factor for the configuration score (0-10).
+const maxScorePoints = 10
 
 // AgentRole defines a role that needs a model recommendation.
 type AgentRole struct {
@@ -136,14 +138,20 @@ func RecommendConfig(ctx context.Context, client *Client, roles []string) ([]Pro
 
 		assignmentCount[best.model.OCID]++
 
+		var priceInput, priceOutput float64
+		if best.model.Pricing != nil {
+			priceInput = best.model.Pricing.Prompt * 1_000_000
+			priceOutput = best.model.Pricing.Completion * 1_000_000
+		}
+
 		rec := Recommendation{
 			Agent:       role.ID,
 			Criticidad:  role.Criticidad,
 			Model:       best.model.OCName,
 			OCID:        best.model.OCID,
 			Provider:    deriveProvider(best.model.OCID),
-			PriceInput:  best.model.Pricing.Prompt * 1_000_000,
-			PriceOutput: best.model.Pricing.Completion * 1_000_000,
+			PriceInput:  priceInput,
+			PriceOutput: priceOutput,
 			Intelligence: best.model.Benchmarks.Intelligence,
 			Coding:      best.model.Benchmarks.Coding,
 			Agentic:     best.model.Benchmarks.Agentic,
@@ -271,7 +279,10 @@ func collectCandidates(models []EnrichedModel, role AgentRole, used map[string]i
 // buildReason generates a human-readable reason for the recommendation.
 func buildReason(role AgentRole, best *scoredModel) string {
 	m := best.model
-	price := m.Pricing.Prompt * 1_000_000
+	price := 0.0
+	if m.Pricing != nil {
+		price = m.Pricing.Prompt * 1_000_000
+	}
 
 	var metric string
 	switch role.BestMetric {
@@ -359,12 +370,4 @@ func FormatRecommendations(providers []ProviderStatus, recs []Recommendation) st
 	}
 
 	return sb.String()
-}
-
-// safeDiv returns 0 if divisor is 0 to avoid division by zero.
-func safeDiv(a, b float64) float64 {
-	if math.Abs(b) < 1e-9 {
-		return 0
-	}
-	return a / b
 }

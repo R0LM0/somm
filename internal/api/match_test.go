@@ -443,9 +443,9 @@ func TestParseMoney(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := parseMoney(tt.in)
+			got := ParseMoney(tt.in)
 			if math.Abs(got-tt.want) > 1e-12 {
-				t.Errorf("parseMoney(%q) = %v, want %v", tt.in, got, tt.want)
+				t.Errorf("ParseMoney(%q) = %v, want %v", tt.in, got, tt.want)
 			}
 		})
 	}

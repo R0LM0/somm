@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -23,7 +24,7 @@ const (
 var ErrOCKeyMissing = errors.New("OPENCODE_API_KEY not set in environment")
 
 // NewClient creates a Client. A nil HTTPClient is interpreted as
-// http.DefaultClient at request time.
+// a default client with a 30-second timeout at request time.
 func NewClient(hc *http.Client, ocKey, orKey string) *Client {
 	return &Client{
 		HTTPClient: hc,
@@ -32,63 +33,88 @@ func NewClient(hc *http.Client, ocKey, orKey string) *Client {
 	}
 }
 
+var defaultHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 func (c *Client) httpClient() *http.Client {
 	if c.HTTPClient != nil {
 		return c.HTTPClient
 	}
-	return http.DefaultClient
+	return defaultHTTPClient
 }
 
 // fetchOC performs a GET request to an OpenCode models endpoint and returns
 // the decoded model list. It expects a JSON object with a "data" field or a
-// JSON array directly.
+// JSON array directly. Retries once on 5xx or network errors.
 func (c *Client) fetchOC(ctx context.Context, url, label string) ([]OCModel, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.OCAPIKey)
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.OCAPIKey)
 
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+		resp, err := c.httpClient().Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("OpenCode %s API returned %d: %s", label, resp.StatusCode, http.StatusText(resp.StatusCode))
-	}
+		if resp.StatusCode >= 500 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+			lastErr = fmt.Errorf("OpenCode %s API returned %d: %s — %s", label, resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(body)))
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+			return nil, fmt.Errorf("OpenCode %s API returned %d: %s — %s", label, resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(body)))
+		}
 
-	return decodeBody[OCModel](resp.Body, "OpenCode")
+		return decodeBody[OCModel](resp.Body, "OpenCode")
+	}
+	return nil, lastErr
 }
 
 // fetchOpenRouter performs a GET request to an OpenRouter models endpoint and
 // returns the decoded model list. It expects a JSON object with a "data" field
 // or a JSON array directly. Authorization is only sent when an API key is set.
+// Retries once on 5xx or network errors.
 func (c *Client) fetchOpenRouter(ctx context.Context, url string) ([]ORModel, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	for k, v := range BuildOpenRouterHeaders(c.ORAPIKey) {
-		req.Header[k] = v
-	}
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		for k, v := range BuildOpenRouterHeaders(c.ORAPIKey) {
+			req.Header[k] = v
+		}
 
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+		resp, err := c.httpClient().Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("OpenRouter API returned %d", resp.StatusCode)
-	}
+		if resp.StatusCode >= 500 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+			lastErr = fmt.Errorf("OpenRouter API returned %d: %s — %s", resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(body)))
+			continue
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+			return nil, fmt.Errorf("OpenRouter API returned %d: %s — %s", resp.StatusCode, http.StatusText(resp.StatusCode), strings.TrimSpace(string(body)))
+		}
 
-	return decodeBody[ORModel](resp.Body, "OpenRouter")
+		return decodeBody[ORModel](resp.Body, "OpenRouter")
+	}
+	return nil, lastErr
 }
 
 func decodeBody[T any](r io.Reader, source string) ([]T, error) {
-	b, err := io.ReadAll(r)
+	b, err := io.ReadAll(io.LimitReader(r, 1<<20)) // 1 MiB limit
 	if err != nil {
 		return nil, fmt.Errorf("reading %s response: %w", source, err)
 	}
@@ -183,9 +209,9 @@ func (c *Client) ListModels(ctx context.Context, subscription string, enrich boo
 		orModels, err := c.fetchOpenRouter(ctx, orURL)
 		if err == nil {
 			enrichWithOpenRouter(models, orModels)
+		} else {
+			slog.Warn("OpenRouter enrichment failed, returning models without benchmarks", "error", err)
 		}
-		// OpenRouter failures are intentionally degraded: return models without enrichment.
-		_ = err
 	}
 
 	sort.Slice(models, func(i, j int) bool {

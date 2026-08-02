@@ -35,21 +35,21 @@ func ValidateConfig(ctx context.Context, client *Client) (*ValidationResult, err
 	result := &ValidationResult{}
 
 	// 1. Check provider status.
-_ocConfigured := client.OCAPIKey != ""
-	_orConfigured := client.ORAPIKey != ""
+	ocConfigured := client.OCAPIKey != ""
+	orConfigured := client.ORAPIKey != ""
 
 	result.Providers = append(result.Providers, ProviderStatusDetail{
 		Name:       "OpenCode Go",
-		Configured: _ocConfigured,
+		Configured: ocConfigured,
 	})
 	result.Providers = append(result.Providers, ProviderStatusDetail{
 		Name:       "OpenRouter",
-		Configured: _orConfigured,
+		Configured: orConfigured,
 	})
 
 	// 2. Fetch models if OpenCode is configured.
 	var models []EnrichedModel
-	if _ocConfigured {
+	if ocConfigured {
 		var err error
 		models, err = client.ListModels(ctx, "both", true)
 		if err != nil {
@@ -80,56 +80,56 @@ _ocConfigured := client.OCAPIKey != ""
 	}
 
 	// 4. For each agent, check if recommended model is available and optimal.
-ModelIndex := make(map[string]EnrichedModel, len(models))
-for _, m := range models {
-	ModelIndex[m.OCID] = m
-}
-
-score := 0
-maxScore := len(recs)
-
-for _, rec := range recs {
-	check := AgentCheck{
-		Agent:        rec.Agent,
-		CurrentModel: rec.Model,
+	modelIndex := make(map[string]EnrichedModel, len(models))
+	for _, m := range models {
+		modelIndex[m.OCID] = m
 	}
 
-	if rec.Model == "" {
-		check.Status = "error"
-		check.Suggestion = "No hay modelo disponible con benchmarks para este agente"
-	} else if rec.Model != "" {
-		m, ok := ModelIndex[rec.OCID]
-		if !ok {
-			check.Status = "warning"
-			check.Suggestion = fmt.Sprintf("Modelo %s recomendado pero no encontrado en modelos disponibles", rec.Model)
-		} else {
-			// Check if there's a clearly better option for critical roles.
-			check.Status = "optimal"
-			check.Suggestion = rec.Reason
+	score := 0
+	maxScore := len(recs)
 
-			if rec.Criticidad == "CRÍTICO" {
-				// For critical roles, check if a higher-scoring model exists.
-				bestAlt := findBestAlternative(models, m, rec)
-				if bestAlt != nil {
-					check.ImprovementNote = fmt.Sprintf(
-						"Alternativa: %s (mejor relación calidad/precio)",
-						bestAlt.OCName,
-					)
+	for _, rec := range recs {
+		check := AgentCheck{
+			Agent:        rec.Agent,
+			CurrentModel: rec.Model,
+		}
+
+		if rec.Model == "" {
+			check.Status = "error"
+			check.Suggestion = "No hay modelo disponible con benchmarks para este agente"
+		} else if rec.Model != "" {
+			m, ok := modelIndex[rec.OCID]
+			if !ok {
+				check.Status = "warning"
+				check.Suggestion = fmt.Sprintf("Modelo %s recomendado pero no encontrado en modelos disponibles", rec.Model)
+			} else {
+				// Check if there's a clearly better option for critical roles.
+				check.Status = "optimal"
+				check.Suggestion = rec.Reason
+
+				if rec.Criticidad == "CRÍTICO" {
+					// For critical roles, check if a higher-scoring model exists.
+					bestAlt := findBestAlternative(models, m, rec)
+					if bestAlt != nil {
+						check.ImprovementNote = fmt.Sprintf(
+							"Alternativa: %s (mejor relación calidad/precio)",
+							bestAlt.OCName,
+						)
+					}
 				}
 			}
 		}
-	}
 
-	if check.Status == "optimal" {
-		score++
-	}
+		if check.Status == "optimal" {
+			score++
+		}
 
-	result.AgentChecks = append(result.AgentChecks, check)
-}
+		result.AgentChecks = append(result.AgentChecks, check)
+	}
 
 	// 5. Calculate score.
 	if maxScore > 0 {
-		result.Score = score * 10 / maxScore
+		result.Score = score * maxScorePoints / maxScore
 	}
 
 	// 6. Generate improvement suggestions.
@@ -186,31 +186,31 @@ func generateImprovements(providers []ProviderStatusDetail, models []EnrichedMod
 	var improvements []string
 
 	// Check if OpenRouter is missing — it provides benchmarks.
-	_orConfigured := false
+	orConfigured := false
 	for _, p := range providers {
 		if p.Name == "OpenRouter" {
-			_orConfigured = p.Configured
+			orConfigured = p.Configured
 		}
 	}
-	if !_orConfigured {
+	if !orConfigured {
 		improvements = append(improvements,
 			"Agregar OPENROUTER_API_KEY para habilitar benchmarks y comparación de precios")
 	}
 
 	// Check for models without benchmarks.
-	_withBenchmarks := 0
-	_withoutBenchmarks := 0
+	withBenchmarks := 0
+	withoutBenchmarks := 0
 	for _, m := range models {
 		if m.Benchmarks.Intelligence != nil {
-			_withBenchmarks++
+			withBenchmarks++
 		} else {
-			_withoutBenchmarks++
+			withoutBenchmarks++
 		}
 	}
-	if _withoutBenchmarks > 0 {
+	if withoutBenchmarks > 0 {
 		improvements = append(improvements,
 			fmt.Sprintf("%d modelos sin benchmarks — agregar OPENROUTER_API_KEY para enriquecer datos",
-				_withoutBenchmarks))
+				withoutBenchmarks))
 	}
 
 	// Check for critical roles without optimal models.
@@ -222,22 +222,22 @@ func generateImprovements(providers []ProviderStatusDetail, models []EnrichedMod
 	}
 
 	// Suggest specific providers based on agent needs.
-	_needsCoding := false
+	needsCoding := false
 	for _, r := range recs {
 		if r.Coding != nil && *r.Coding > 0 {
-			_needsCoding = true
+			needsCoding = true
 			break
 		}
 	}
-	if _needsCoding {
-		_hasKimi := false
+	if needsCoding {
+		hasKimi := false
 		for _, m := range models {
 			if strings.Contains(strings.ToLower(m.OCID), "kimi") {
-				_hasKimi = true
+				hasKimi = true
 				break
 			}
 		}
-		if !_hasKimi {
+		if !hasKimi {
 			improvements = append(improvements,
 				"Agregar KIMI_API_KEY para mejorar capacidades de coding")
 		}
