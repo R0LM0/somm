@@ -19,12 +19,12 @@ func TestToolsE2E(t *testing.T) {
 		t.Fatalf("finding repo root: %v", err)
 	}
 
-	binary := filepath.Join(t.TempDir(), "server"+exeSuffix())
+	binary := filepath.Join(t.TempDir(), "somm"+exeSuffix())
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd", "server")
+	build.Dir = filepath.Join(repoRoot, "cmd", "somm")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
-		t.Skipf("skipping: failed to build server binary: %v", err)
+		t.Skipf("skipping: failed to build somm binary: %v", err)
 	}
 
 	cmd := exec.Command(binary, "-opencode-api-key", "test-key")
@@ -101,13 +101,20 @@ func TestToolsE2E(t *testing.T) {
 		t.Fatalf("write get_agent_criteria: %v", err)
 	}
 
-	if !scanner.Scan() {
-		t.Fatal("no get_agent_criteria response")
+	criteriaResp := ""
+	for i := 0; i < 10; i++ {
+		if !scanner.Scan() {
+			t.Fatal("no get_agent_criteria response")
+		}
+		criteriaResp = scanner.Text()
+		if strings.Contains(criteriaResp, `"id":3`) {
+			break
+		}
+		// Ignore server notifications that may arrive out of band.
+		t.Logf("Skipping non-response line: %s", criteriaResp)
 	}
-	criteriaResp := scanner.Text()
 	if !strings.Contains(criteriaResp, `"CRITICIDAD"`) && !strings.Contains(criteriaResp, `"CRITERIOS"`) {
 		t.Logf("get_agent_criteria response: %s", criteriaResp)
-		// Tool might return different format, just check it's valid JSON
 		if !strings.Contains(criteriaResp, `"id":3`) {
 			t.Fatalf("get_agent_criteria response missing id=3: %s", criteriaResp)
 		}

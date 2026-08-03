@@ -18,6 +18,7 @@ import (
 	"github.com/R0LM0/somm/internal/profile"
 	"github.com/joho/godotenv"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/term"
 )
 
 var (
@@ -27,16 +28,108 @@ var (
 )
 
 func main() {
-	// Check for setup subcommand
+	// Check for setup subcommand before any setup pre-flight.
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		runSetup()
 		return
+	}
+
+	skipSetup, remaining := parseSkipSetup(os.Args)
+	os.Args = remaining
+
+	if !maybeRunSetup(skipSetup) {
+		os.Exit(1)
 	}
 
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "[somm] Fatal error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// parseSkipSetup detects --skip-setup and returns the argument list without it
+// so the main flag set never sees the flag.
+func parseSkipSetup(args []string) (bool, []string) {
+	skip := false
+	remaining := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "--skip-setup" {
+			skip = true
+			continue
+		}
+		remaining = append(remaining, arg)
+	}
+	return skip, remaining
+}
+
+func skipSetupFlag(args []string) bool {
+	skip, _ := parseSkipSetup(args)
+	return skip
+}
+
+// maybeRunSetup ensures a required OpenCode API key is available before the MCP
+// server starts. It launches the interactive setup wizard when stdin is a TTY,
+// and returns false only when configuration is still missing.
+func maybeRunSetup(skipSetup bool) bool {
+	if skipSetup {
+		return true
+	}
+
+	loadEnvFromBinaryDir()
+	if configReady() {
+		return true
+	}
+
+	if !isTerminal() {
+		fmt.Fprintln(os.Stderr, "[somm] OPENCODE_API_KEY is not configured.")
+		fmt.Fprintln(os.Stderr, "Run `somm setup` interactively, set the key in your environment,")
+		fmt.Fprintln(os.Stderr, "or pass `--skip-setup` if you will provide `-opencode-api-key`.")
+		return false
+	}
+
+	runSetup()
+
+	// Re-evaluate after the wizard has written .env.
+	loadEnvFromBinaryDir()
+	if configReady() {
+		fmt.Println("Setup complete! Starting server...")
+		return true
+	}
+
+	fmt.Fprintln(os.Stderr, "[somm] Setup did not configure OPENCODE_API_KEY.")
+	return false
+}
+
+func loadEnvFromBinaryDir() {
+	if p := binaryEnvPath(); p != "" {
+		loadEnvFile(p)
+	}
+	_ = godotenv.Load()
+}
+
+func binaryEnvPath() string {
+	if exe, err := os.Executable(); err == nil {
+		return filepath.Join(filepath.Dir(exe), ".env")
+	}
+	return ""
+}
+
+func loadEnvFile(envPath string) {
+	if envMap, err := godotenv.Read(envPath); err == nil {
+		for k, v := range envMap {
+			if os.Getenv(k) == "" {
+				os.Setenv(k, v)
+			}
+		}
+	}
+}
+
+func configReady() bool {
+	return strings.TrimSpace(os.Getenv("OPENCODE_API_KEY")) != ""
+}
+
+func isTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 func run() error {
@@ -57,12 +150,14 @@ func run() error {
 	var (
 		ocKey       string
 		orKey       string
+		kimiKey     string
 		profilePath string
 	)
 	// NOTE: API keys passed via CLI flags are visible in process listings (ps aux).
 	// Prefer setting them via environment variables or .env file instead.
 	flag.StringVar(&ocKey, "opencode-api-key", os.Getenv("OPENCODE_API_KEY"), "OpenCode API key (required)")
 	flag.StringVar(&orKey, "openrouter-api-key", os.Getenv("OPENROUTER_API_KEY"), "OpenRouter API key (optional)")
+	flag.StringVar(&kimiKey, "kimi-api-key", os.Getenv("KIMI_API_KEY"), "Kimi API key (optional)")
 	flag.StringVar(&profilePath, "profile", "", "Path to a role profile YAML file (falls back to SOMM_PROFILE env, ./somm.yaml, XDG config, then the embedded gentle-ai preset)")
 	flag.Parse()
 
@@ -79,7 +174,7 @@ func run() error {
 		return fmt.Errorf("resolving profile: %w", err)
 	}
 
-	client := api.NewClient(nil, ocKey, orKey)
+	client := api.NewClient(nil, ocKey, orKey, kimiKey)
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "somm",

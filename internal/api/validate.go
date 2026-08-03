@@ -39,6 +39,7 @@ func ValidateConfig(ctx context.Context, client *Client, prof *profile.Profile) 
 	// 1. Check provider status.
 	ocConfigured := client.OCAPIKey != ""
 	orConfigured := client.ORAPIKey != ""
+	kimiConfigured := client.KIMAPIKey != ""
 
 	result.Providers = append(result.Providers, ProviderStatusDetail{
 		Name:       "OpenCode Go",
@@ -47,6 +48,10 @@ func ValidateConfig(ctx context.Context, client *Client, prof *profile.Profile) 
 	result.Providers = append(result.Providers, ProviderStatusDetail{
 		Name:       "OpenRouter",
 		Configured: orConfigured,
+	})
+	result.Providers = append(result.Providers, ProviderStatusDetail{
+		Name:       "Kimi",
+		Configured: kimiConfigured,
 	})
 
 	// 2. Fetch models if OpenCode is configured.

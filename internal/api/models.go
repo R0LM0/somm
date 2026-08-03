@@ -105,4 +105,5 @@ type Client struct {
 	HTTPClient *http.Client
 	OCAPIKey   string
 	ORAPIKey   string
+	KIMAPIKey  string
 }

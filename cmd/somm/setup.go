@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -29,8 +32,14 @@ func runSetup() {
 	fmt.Println("==============================")
 	fmt.Println()
 
+	// Parse --force flag before other setup logic.
+	force := false
+	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	fs.BoolVar(&force, "force", false, "Force reconfiguration")
+	_ = fs.Parse(os.Args[2:])
+
 	// Check for updates
- latestVersion, err := checkForUpdate()
+	latestVersion, err := checkForUpdate()
 	if err == nil && latestVersion != version {
 		fmt.Printf("📦 Nueva versión disponible: %s (actual: %s)\n\n", latestVersion, version)
 
@@ -69,57 +78,100 @@ func runSetup() {
 		os.Exit(1)
 	}
 
-	// Step 3: Check if already configured
-	binaryPath, _ := os.Executable()
-	alreadyConfigured := false
-	if entry, exists := config.MCP["somm"]; exists {
-		if len(entry.Command) > 0 {
-			binaryPath = entry.Command[0]
-			alreadyConfigured = true
-		}
+	// Step 3: Resolve binary path and check configuration state.
+	binaryPath, envPath, err := resolveBinaryAndEnv(config)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Error resolviendo binario: %v\n", err)
+		os.Exit(1)
 	}
 
-	if alreadyConfigured {
-		fmt.Printf("✅ somm ya está configurado\n")
-		fmt.Printf("   Ubicación: %s\n\n", binaryPath)
+	alreadyConfigured, configuredBinaryPath := isAlreadyConfigured(envPath, config)
+	if configuredBinaryPath != "" {
+		binaryPath = configuredBinaryPath
+		envPath = filepath.Join(filepath.Dir(binaryPath), ".env")
+	}
 
-		// Validate existing config
-		fmt.Println("📋 Validando configuración...")
-		fmt.Println()
-
-		// Check .env
-		envPath := filepath.Join(filepath.Dir(binaryPath), ".env")
-		if _, err := os.Stat(envPath); err == nil {
-			fmt.Println("✅ .env encontrado")
-		} else {
-			fmt.Println("❌ .env no encontrado")
-		}
-
-		// Check OpenCode config
-		if entry, exists := config.MCP["somm"]; exists {
-			if entry.Enabled {
-				fmt.Println("✅ Habilitado en OpenCode")
-			} else {
-				fmt.Println("⚠️  Deshabilitado en OpenCode")
-			}
-		}
-
-		fmt.Println("\n✅ Configuración válida!")
-		fmt.Println("\nTools disponibles: 8")
-		fmt.Println("   - list_available_models")
-		fmt.Println("   - get_agent_criteria")
-		fmt.Println("   - get_model_benchmarks")
-		fmt.Println("   - recommend_config")
-		fmt.Println("   - estimate_cost")
-		fmt.Println("   - compare_models")
-		fmt.Println("   - validate_config")
-		fmt.Println("   - export_config")
-
-		fmt.Println("\nPara reconfigurar: somm setup --force")
+	if alreadyConfigured && !force {
+		runStatus(binaryPath, envPath)
 		return
 	}
 
-	// Not configured - guide through setup
+	// Not configured or force: guide through setup.
+	runConfigurationFlow(binaryPath, envPath, config, configPath)
+}
+
+// resolveBinaryAndEnv returns the resolved binary path and the .env path next
+// to it. It prefers the path recorded in opencode.json when available.
+func resolveBinaryAndEnv(config *openCodeConfig) (binaryPath, envPath string, err error) {
+	if entry, exists := config.MCP["somm"]; exists && len(entry.Command) > 0 && entry.Command[0] != "" {
+		binaryPath = entry.Command[0]
+	} else if binaryPath, err = findBinary(); err != nil {
+		binaryPath, _ = os.Executable()
+	}
+	if binaryPath == "" {
+		return "", "", errors.New("no se pudo resolver la ubicación del binario")
+	}
+	return binaryPath, filepath.Join(filepath.Dir(binaryPath), ".env"), nil
+}
+
+// isAlreadyConfigured reports whether .env contains OPENCODE_API_KEY and
+// opencode.json contains a valid somm MCP entry. When configured, it returns
+// the binary path from the MCP entry.
+func isAlreadyConfigured(envPath string, config *openCodeConfig) (bool, string) {
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		return false, ""
+	}
+
+	ocKey := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "OPENCODE_API_KEY=") {
+			ocKey = strings.TrimPrefix(line, "OPENCODE_API_KEY=")
+			break
+		}
+	}
+	if strings.TrimSpace(ocKey) == "" {
+		return false, ""
+	}
+
+	entry, exists := config.MCP["somm"]
+	if !exists || len(entry.Command) == 0 || entry.Command[0] == "" {
+		return false, ""
+	}
+
+	return true, entry.Command[0]
+}
+
+func runStatus(binaryPath, envPath string) {
+	fmt.Printf("✅ somm ya está configurado\n")
+	fmt.Printf("   Ubicación: %s\n\n", binaryPath)
+
+	fmt.Println("📋 Validando configuración...")
+	fmt.Println()
+
+	if _, err := os.Stat(envPath); err == nil {
+		fmt.Println("✅ .env encontrado")
+	} else {
+		fmt.Println("❌ .env no encontrado")
+	}
+
+	fmt.Println("✅ Habilitado en OpenCode")
+	fmt.Println("\n✅ Configuración válida!")
+	fmt.Println("\nTools disponibles: 8")
+	fmt.Println("   - list_available_models")
+	fmt.Println("   - get_agent_criteria")
+	fmt.Println("   - get_model_benchmarks")
+	fmt.Println("   - recommend_config")
+	fmt.Println("   - estimate_cost")
+	fmt.Println("   - compare_models")
+	fmt.Println("   - validate_config")
+	fmt.Println("   - export_config")
+
+	fmt.Println("\nPara reconfigurar: somm setup --force")
+}
+
+func runConfigurationFlow(binaryPath, envPath string, config *openCodeConfig, configPath string) {
 	fmt.Println("❌ somm no está configurado")
 	fmt.Println()
 
@@ -137,8 +189,8 @@ func runSetup() {
 
 	fmt.Println()
 
-	// Step 4: Get binary path if not set
-	if !alreadyConfigured {
+	// Resolve binary path if not already set.
+	if binaryPath == "" {
 		if path, err := findBinary(); err == nil {
 			binaryPath = path
 		} else {
@@ -147,55 +199,53 @@ func runSetup() {
 				Value(&binaryPath).Run()
 		}
 	}
+	envPath = filepath.Join(filepath.Dir(binaryPath), ".env")
 
-	// Step 5: Configure API keys
-	fmt.Println("🔑 Configurar API keys (Enter para omitir):")
-	fmt.Println()
-
-	var ocKey, orKey string
-
-	huh.NewInput().
-		Title("OpenCode API Key (requerido)").
-		Value(&ocKey).Run()
-
-	huh.NewInput().
-		Title("OpenRouter API Key (opcional)").
-		Value(&orKey).Run()
-
-	// Step 6: Save .env
-	fmt.Println()
-	envPath := filepath.Join(filepath.Dir(binaryPath), ".env")
-
-	if ocKey != "" || orKey != "" {
-		var envContent strings.Builder
-		if ocKey != "" {
-			envContent.WriteString(fmt.Sprintf("OPENCODE_API_KEY=%s\n", ocKey))
-		}
-		if orKey != "" {
-			envContent.WriteString(fmt.Sprintf("OPENROUTER_API_KEY=%s\n", orKey))
-		}
-
-		if err := os.WriteFile(envPath, []byte(envContent.String()), 0600); err != nil {
-			fmt.Printf("⚠️  Error guardando .env: %v\n", err)
-		} else {
-			fmt.Printf("✅ .env guardado en: %s\n", envPath)
-		}
+	selected, err := providersSelected()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Error seleccionando proveedores: %v\n", err)
+		os.Exit(1)
 	}
 
-	// Step 7: Update OpenCode config
-	config.MCP["somm"] = mcpEntry{
-		Command: []string{binaryPath},
-		Enabled: true,
-		Type:    "local",
+	keys := map[string]string{}
+	for _, provider := range selected {
+		var title string
+		switch provider {
+		case "OpenCode":
+			title = "OpenCode API Key (requerido)"
+		case "OpenRouter":
+			title = "OpenRouter API Key (opcional)"
+		case "Kimi":
+			title = "Kimi API Key (opcional)"
+		}
+
+		var value string
+		huh.NewInput().
+			Title(title).
+			Value(&value).Run()
+		value = strings.TrimSpace(value)
+
+		if provider == "OpenCode" && value == "" {
+			fmt.Fprintln(os.Stderr, "❌ OpenCode API Key es requerida")
+			os.Exit(1)
+		}
+		keys[keyNameForProvider(provider)] = value
 	}
 
+	fmt.Println()
+	if err := saveEnvFile(envPath, keys); err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Error guardando .env: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("✅ .env guardado en: %s\n", envPath)
+
+	updateMCPConfig(config, binaryPath)
 	if err := writeConfig(configPath, config); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Error actualizando config: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Printf("✅ opencode.json actualizado\n\n")
 
-	// Step 8: Show tools
 	fmt.Println("✅ Tools disponibles: 8")
 	fmt.Println("   - list_available_models")
 	fmt.Println("   - get_agent_criteria")
@@ -206,12 +256,10 @@ func runSetup() {
 	fmt.Println("   - validate_config")
 	fmt.Println("   - export_config")
 
-	// Summary
 	fmt.Println("\n==============================")
 	fmt.Println("✅ Configuración completada!")
 	fmt.Println("==============================")
 
-	// Create PowerShell alias
 	if err := createPowerShellAlias(); err != nil {
 		fmt.Printf("⚠️  No se pudo crear alias automático: %v\n", err)
 		fmt.Println("Creá manualmente: function msetup { somm setup }")
@@ -226,6 +274,69 @@ func runSetup() {
 	fmt.Println("3. Probá: \"¿Qué modelos tengo disponibles?\"")
 	fmt.Println("\nPara reconfigurar: somm setup")
 }
+
+func providersSelected() ([]string, error) {
+	var selected []string
+	options := []huh.Option[string]{
+		huh.NewOption("OpenCode Go/Zen (requerido)", "OpenCode").Selected(true),
+		huh.NewOption("OpenRouter (opcional)", "OpenRouter"),
+		huh.NewOption("Kimi (opcional)", "Kimi"),
+	}
+
+	err := huh.NewMultiSelect[string]().
+		Title("¿Qué proveedores vas a usar?").
+		Options(options...).
+		Value(&selected).
+		Validate(validateProviders).
+		Run()
+	if err != nil {
+		return nil, err
+	}
+	return selected, nil
+}
+
+func validateProviders(v []string) error {
+	if !slices.Contains(v, "OpenCode") {
+		return errors.New("OpenCode es requerido")
+	}
+	return nil
+}
+
+func keyNameForProvider(provider string) string {
+	switch provider {
+	case "OpenCode":
+		return "OPENCODE_API_KEY"
+	case "OpenRouter":
+		return "OPENROUTER_API_KEY"
+	case "Kimi":
+		return "KIMI_API_KEY"
+	default:
+		return ""
+	}
+}
+
+func saveEnvFile(envPath string, keys map[string]string) error {
+	var envContent strings.Builder
+	order := []string{"OPENCODE_API_KEY", "OPENROUTER_API_KEY", "KIMI_API_KEY"}
+	for _, key := range order {
+		if value, ok := keys[key]; ok && value != "" {
+			envContent.WriteString(fmt.Sprintf("%s=%s\n", key, value))
+		}
+	}
+	if envContent.Len() == 0 {
+		return nil
+	}
+	return os.WriteFile(envPath, []byte(envContent.String()), 0600)
+}
+
+func updateMCPConfig(config *openCodeConfig, binaryPath string) {
+	config.MCP["somm"] = mcpEntry{
+		Command: []string{binaryPath},
+		Enabled: true,
+		Type:    "local",
+	}
+}
+
 
 func findOpenCodeConfig() (string, error) {
 	home, err := os.UserHomeDir()
@@ -274,7 +385,7 @@ func findBinary() (string, error) {
 		gopath = filepath.Join(home, "go")
 	}
 
-	binName := "server"
+	binName := "somm"
 	if runtime.GOOS == "windows" {
 		binName += ".exe"
 	}
@@ -407,7 +518,7 @@ func updateBinary(version string) error {
 	}
 
 	// Find the binary in extracted files
-	binaryName := "server"
+	binaryName := "somm"
 	if osName == "windows" {
 		binaryName += ".exe"
 	}

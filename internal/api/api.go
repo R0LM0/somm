@@ -25,11 +25,12 @@ var ErrOCKeyMissing = errors.New("OPENCODE_API_KEY not set in environment")
 
 // NewClient creates a Client. A nil HTTPClient is interpreted as
 // a default client with a 30-second timeout at request time.
-func NewClient(hc *http.Client, ocKey, orKey string) *Client {
+func NewClient(hc *http.Client, ocKey, orKey, kimiKey string) *Client {
 	return &Client{
 		HTTPClient: hc,
 		OCAPIKey:   ocKey,
 		ORAPIKey:   orKey,
+		KIMAPIKey:  kimiKey,
 	}
 }
 

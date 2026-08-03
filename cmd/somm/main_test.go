@@ -24,12 +24,12 @@ func TestServerInitialize(t *testing.T) {
 		t.Fatalf("finding repo root: %v", err)
 	}
 
-	binary := filepath.Join(t.TempDir(), "server"+exeSuffix())
+	binary := filepath.Join(t.TempDir(), "somm"+exeSuffix())
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd", "server")
+	build.Dir = filepath.Join(repoRoot, "cmd", "somm")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
-		t.Skipf("skipping: failed to build server binary: %v", err)
+		t.Skipf("skipping: failed to build somm binary: %v", err)
 	}
 
 	cmd := exec.Command(binary, "-opencode-api-key", "test-key")
@@ -88,8 +88,8 @@ func TestServerInitialize(t *testing.T) {
 	}
 }
 
-// TestServerRequiresOpenCodeKey verifies that the binary exits with an error
-// when the required -opencode-api-key flag is missing.
+// TestServerRequiresOpenCodeKey verifies that the binary exits with the legacy
+// error when the required key is missing and --skip-setup is passed.
 func TestServerRequiresOpenCodeKey(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping subprocess smoke test in short mode")
@@ -100,18 +100,19 @@ func TestServerRequiresOpenCodeKey(t *testing.T) {
 		t.Fatalf("finding repo root: %v", err)
 	}
 
-	binary := filepath.Join(t.TempDir(), "server"+exeSuffix())
+	binary := filepath.Join(t.TempDir(), "somm"+exeSuffix())
 	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd", "server")
+	build.Dir = filepath.Join(repoRoot, "cmd", "somm")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
-		t.Skipf("skipping: failed to build server binary: %v", err)
+		t.Skipf("skipping: failed to build somm binary: %v", err)
 	}
 
-	cmd := exec.Command(binary)
+	var stderr bytes.Buffer
+	cmd := exec.Command(binary, "--skip-setup")
 	cmd.Dir = t.TempDir() // Run in temp dir without .env
-	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=", "OPENROUTER_API_KEY=")
+	cmd.Stderr = &stderr
+	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=", "OPENROUTER_API_KEY=", "KIMI_API_KEY=")
 
 	err = cmd.Run()
 	if err == nil {
@@ -124,6 +125,115 @@ func TestServerRequiresOpenCodeKey(t *testing.T) {
 	if exitErr.ExitCode() == 0 {
 		t.Fatalf("expected non-zero exit code, got %d", exitErr.ExitCode())
 	}
+	if !strings.Contains(stderr.String(), "-opencode-api-key is required") {
+		t.Fatalf("expected legacy error message, got stderr: %s", stderr.String())
+	}
+}
+
+func TestLoadEnvFile(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+
+	if err := os.WriteFile(envPath, []byte("OPENCODE_API_KEY=from-env-file\nOPENROUTER_API_KEY=or-from-file\n"), 0644); err != nil {
+		t.Fatalf("writing .env: %v", err)
+	}
+
+	t.Setenv("OPENCODE_API_KEY", "")
+	t.Setenv("OPENROUTER_API_KEY", "")
+
+	loadEnvFile(envPath)
+
+	if got := os.Getenv("OPENCODE_API_KEY"); got != "from-env-file" {
+		t.Errorf("OPENCODE_API_KEY = %q, want from-env-file", got)
+	}
+	if got := os.Getenv("OPENROUTER_API_KEY"); got != "or-from-file" {
+		t.Errorf("OPENROUTER_API_KEY = %q, want or-from-file", got)
+	}
+}
+
+func TestLoadEnvFile_DoesNotOverrideExisting(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+
+	if err := os.WriteFile(envPath, []byte("OPENCODE_API_KEY=from-env-file\n"), 0644); err != nil {
+		t.Fatalf("writing .env: %v", err)
+	}
+
+	t.Setenv("OPENCODE_API_KEY", "existing")
+
+	loadEnvFile(envPath)
+
+	if got := os.Getenv("OPENCODE_API_KEY"); got != "existing" {
+		t.Errorf("OPENCODE_API_KEY = %q, want existing", got)
+	}
+}
+
+func TestConfigReady(t *testing.T) {
+	tests := []struct {
+		name    string
+		envValue string
+		want    bool
+	}{
+		{"key present", "secret", true},
+		{"key missing", "", false},
+		{"key whitespace only", "   ", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OPENCODE_API_KEY", tt.envValue)
+			if got := configReady(); got != tt.want {
+				t.Errorf("configReady() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsTerminal(t *testing.T) {
+	// Stdin in tests is not a terminal.
+	if isTerminal() {
+		t.Error("isTerminal() = true, want false in test environment")
+	}
+}
+
+func TestSkipSetupFlagDetected(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"no flag", []string{"somm"}, false},
+		{"with flag", []string{"somm", "--skip-setup"}, true},
+		{"flag with value after", []string{"somm", "--skip-setup", "arg"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := skipSetupFlag(tt.args); got != tt.want {
+				t.Errorf("skipSetupFlag(%v) = %v, want %v", tt.args, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMaybeRunSetup(t *testing.T) {
+	t.Run("skip setup returns true", func(t *testing.T) {
+		if !maybeRunSetup(true) {
+			t.Error("maybeRunSetup(true) = false, want true")
+		}
+	})
+
+	t.Run("config ready returns true", func(t *testing.T) {
+		t.Setenv("OPENCODE_API_KEY", "ready")
+		if !maybeRunSetup(false) {
+			t.Error("maybeRunSetup(false) with config ready = false, want true")
+		}
+	})
+
+	t.Run("missing key in non-terminal returns false", func(t *testing.T) {
+		t.Setenv("OPENCODE_API_KEY", "")
+		if maybeRunSetup(false) {
+			t.Error("maybeRunSetup(false) with missing key in non-terminal = true, want false")
+		}
+	})
 }
 
 func findRepoRoot() (string, error) {

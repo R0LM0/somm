@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  Project: somm — MCP server for AI model recommendations (github.com/R0LM0/somm)
+  Tech stack: Go 1.26, modelcontextprotocol/go-sdk v1.2.0, charmbracelet/huh (TUI), yaml.v3, godotenv
+  Architecture: standard Go layout — cmd/somm (entrypoint + MCP tools), internal/{api,profile,guide}
+  Testing: go test -cover ./... (make test adds -race with CGO); strict TDD enabled
+  Style: gofmt, go vet; .golangci.yml configured (errcheck, staticcheck, unused, gosimple, ineffassign)
+  Build: Makefile with ldflags version stamping; goreleaser for releases
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing code patterns in internal/ packages
+    tdd: true
+    test_command: "go test -cover ./..."
+  verify:
+    test_command: "go test -cover ./..."
+    build_command: "go build ./... && go vet ./..."
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
