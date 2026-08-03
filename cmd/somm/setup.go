@@ -36,7 +36,11 @@ func runSetup() {
 	force := false
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.BoolVar(&force, "force", false, "Force reconfiguration")
-	_ = fs.Parse(os.Args[2:])
+	// Only parse if there are args after "setup" (e.g., somm setup --force)
+	// When called from maybeRunSetup, os.Args may not have the "setup" arg
+	if len(os.Args) >= 3 {
+		_ = fs.Parse(os.Args[2:])
+	}
 
 	// Check for updates
 	latestVersion, err := checkForUpdate()
