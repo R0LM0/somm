@@ -14,7 +14,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/huh"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 type openCodeConfig struct {
@@ -27,12 +27,11 @@ type mcpEntry struct {
 	Type    string   `json:"type"`
 }
 
+// runSetup runs the non-interactive preflight (parse --force, check for
+// updates, locate/read opencode.json, resolve the binary and .env paths,
+// check whether somm is already configured) and hands the result to the
+// Bubble Tea wizard, which owns every interactive step from there.
 func runSetup() {
-	fmt.Println("🔧 Somm Setup Wizard")
-	fmt.Println("==============================")
-	fmt.Println()
-
-	// Parse --force flag before other setup logic.
 	force := false
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.BoolVar(&force, "force", false, "Force reconfiguration")
@@ -42,50 +41,23 @@ func runSetup() {
 		_ = fs.Parse(os.Args[2:])
 	}
 
-	// Check for updates (skip if fails or same version)
 	latestVersion, err := checkForUpdate()
-	// Strip 'v' prefix for comparison (e.g., "v2.1.6" -> "2.1.6")
 	latestClean := strings.TrimPrefix(latestVersion, "v")
 	versionClean := strings.TrimPrefix(version, "v")
-	if err == nil && latestClean != versionClean && latestClean != "" {
-		fmt.Printf("📦 Nueva versión disponible: %s (actual: %s)\n\n", latestVersion, version)
+	updateAvailable := err == nil && latestClean != "" && latestClean != versionClean
 
-		var update bool
-		huh.NewConfirm().
-			Title("¿Querés actualizar a la última versión?").
-			Affirmative("Sí, actualizar").
-			Negative("No, mantener").
-			Value(&update).Run()
-
-		if update {
-			fmt.Println("\n🔄 Descargando actualización...")
-			if err := updateBinary(latestVersion); err != nil {
-				fmt.Printf("⚠️  No se pudo actualizar: %v\n", err)
-				fmt.Println("Podés descargar manualmente desde: https://github.com/R0LM0/somm/releases")
-			} else {
-				fmt.Println("✅ Actualizado a", latestVersion)
-				fmt.Println("🔄 Continuando con el setup...")
-			}
-		}
-		fmt.Println()
-	}
-
-	// Step 1: Find OpenCode config
 	configPath, err := findOpenCodeConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ OpenCode no encontrado: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("✅ opencode.json encontrado en: %s\n\n", configPath)
 
-	// Step 2: Read existing config
 	config, err := readConfig(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Error leyendo config: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Step 3: Resolve binary path and check configuration state.
 	binaryPath, envPath, err := resolveBinaryAndEnv(config)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Error resolviendo binario: %v\n", err)
@@ -98,13 +70,21 @@ func runSetup() {
 		envPath = filepath.Join(filepath.Dir(binaryPath), ".env")
 	}
 
-	if alreadyConfigured && !force {
-		runStatus(binaryPath, envPath)
-		return
-	}
+	m := newModel(modelInit{
+		configPath:        configPath,
+		config:            config,
+		binaryPath:        binaryPath,
+		envPath:           envPath,
+		alreadyConfigured: alreadyConfigured && !force,
+		updateAvailable:   updateAvailable,
+		latestVersion:     latestVersion,
+		currentVersion:    version,
+	})
 
-	// Not configured or force: guide through setup.
-	runConfigurationFlow(binaryPath, envPath, config, configPath)
+	if _, err := tea.NewProgram(m).Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Error en la TUI: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // resolveBinaryAndEnv returns the resolved binary path and the .env path next
@@ -150,166 +130,6 @@ func isAlreadyConfigured(envPath string, config *openCodeConfig) (bool, string) 
 	return true, entry.Command[0]
 }
 
-func runStatus(binaryPath, envPath string) {
-	fmt.Printf("✅ somm ya está configurado\n")
-	fmt.Printf("   Ubicación: %s\n\n", binaryPath)
-
-	fmt.Println("📋 Validando configuración...")
-	fmt.Println()
-
-	if _, err := os.Stat(envPath); err == nil {
-		fmt.Println("✅ .env encontrado")
-	} else {
-		fmt.Println("❌ .env no encontrado")
-	}
-
-	fmt.Println("✅ Habilitado en OpenCode")
-	fmt.Println("\n✅ Configuración válida!")
-	fmt.Println("\nTools disponibles: 8")
-	fmt.Println("   - list_available_models")
-	fmt.Println("   - get_agent_criteria")
-	fmt.Println("   - get_model_benchmarks")
-	fmt.Println("   - recommend_config")
-	fmt.Println("   - estimate_cost")
-	fmt.Println("   - compare_models")
-	fmt.Println("   - validate_config")
-	fmt.Println("   - export_config")
-
-	fmt.Println("\nPara reconfigurar: somm setup --force")
-}
-
-func runConfigurationFlow(binaryPath, envPath string, config *openCodeConfig, configPath string) {
-	fmt.Println("❌ somm no está configurado")
-	fmt.Println()
-
-	var add bool
-	huh.NewConfirm().
-		Title("¿Querés agregarlo a OpenCode?").
-		Affirmative("Sí, agregar").
-		Negative("No, cancelar").
-		Value(&add).Run()
-
-	if !add {
-		fmt.Println("\nCancelado.")
-		return
-	}
-
-	fmt.Println()
-
-	// Resolve binary path if not already set.
-	if binaryPath == "" {
-		if path, err := findBinary(); err == nil {
-			binaryPath = path
-		} else {
-			huh.NewInput().
-				Title("¿Dónde está el binario somm?").
-				Value(&binaryPath).Run()
-		}
-	}
-
-	// Ensure binary is in the correct location ($GOPATH/bin)
-	binaryPath, err := ensureBinaryInCorrectLocation(binaryPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Error moviendo binario: %v\n", err)
-		fmt.Println("Podés moverlo manualmente a $GOPATH/bin/somm.exe")
-	}
-
-	envPath = filepath.Join(filepath.Dir(binaryPath), ".env")
-
-	selected, err := providersSelected()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Error seleccionando proveedores: %v\n", err)
-		os.Exit(1)
-	}
-
-	keys := map[string]string{}
-	for _, provider := range selected {
-		var title string
-		switch provider {
-		case "OpenCode":
-			title = "OpenCode API Key (requerido)"
-		case "OpenRouter":
-			title = "OpenRouter API Key (opcional)"
-		case "Kimi":
-			title = "Kimi API Key (opcional)"
-		}
-
-		var value string
-		huh.NewInput().
-			Title(title).
-			Value(&value).Run()
-		value = strings.TrimSpace(value)
-
-		if provider == "OpenCode" && value == "" {
-			fmt.Fprintln(os.Stderr, "❌ OpenCode API Key es requerida")
-			os.Exit(1)
-		}
-		keys[keyNameForProvider(provider)] = value
-	}
-
-	fmt.Println()
-	if err := saveEnvFile(envPath, keys); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Error guardando .env: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("✅ .env guardado en: %s\n", envPath)
-
-	updateMCPConfig(config, binaryPath)
-	if err := writeConfig(configPath, config); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Error actualizando config: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("✅ opencode.json actualizado\n\n")
-
-	fmt.Println("✅ Tools disponibles: 8")
-	fmt.Println("   - list_available_models")
-	fmt.Println("   - get_agent_criteria")
-	fmt.Println("   - get_model_benchmarks")
-	fmt.Println("   - recommend_config")
-	fmt.Println("   - estimate_cost")
-	fmt.Println("   - compare_models")
-	fmt.Println("   - validate_config")
-	fmt.Println("   - export_config")
-
-	fmt.Println("\n==============================")
-	fmt.Println("✅ Configuración completada!")
-	fmt.Println("==============================")
-
-	if err := createPowerShellAlias(); err != nil {
-		fmt.Printf("⚠️  No se pudo crear alias automático: %v\n", err)
-		fmt.Println("Creá manualmente: function msetup { somm setup }")
-	} else {
-		fmt.Println("\n✅ Alias creado: msetup")
-		fmt.Println("   Reiniciá PowerShell para usarlo")
-	}
-
-	fmt.Println("\nPróximos pasos:")
-	fmt.Println("1. Reiniciá OpenCode")
-	fmt.Println("2. Abrí una nueva sesión")
-	fmt.Println("3. Probá: \"¿Qué modelos tengo disponibles?\"")
-	fmt.Println("\nPara reconfigurar: somm setup")
-}
-
-func providersSelected() ([]string, error) {
-	var selected []string
-	options := []huh.Option[string]{
-		huh.NewOption("OpenCode Go/Zen (requerido)", "OpenCode").Selected(true),
-		huh.NewOption("OpenRouter (opcional)", "OpenRouter"),
-		huh.NewOption("Kimi (opcional)", "Kimi"),
-	}
-
-	err := huh.NewMultiSelect[string]().
-		Title("¿Qué proveedores vas a usar?").
-		Options(options...).
-		Value(&selected).
-		Validate(validateProviders).
-		Run()
-	if err != nil {
-		return nil, err
-	}
-	return selected, nil
-}
-
 func validateProviders(v []string) error {
 	if !slices.Contains(v, "OpenCode") {
 		return errors.New("OpenCode es requerido")
@@ -351,7 +171,6 @@ func updateMCPConfig(config *openCodeConfig, binaryPath string) {
 		Type:    "local",
 	}
 }
-
 
 func findOpenCodeConfig() (string, error) {
 	home, err := os.UserHomeDir()
@@ -413,9 +232,10 @@ func findBinary() (string, error) {
 	return "", fmt.Errorf("binario no encontrado en %s", filepath.Join(gopath, "bin"))
 }
 
-// ensureBinaryInCorrectLocation checks if the binary is in $GOPATH/bin and
-// copies it there if not. Returns the final path to use.
-func ensureBinaryInCorrectLocation(currentPath string) (string, error) {
+// resolveInstallTarget reports where the somm binary should live
+// ($GOPATH/bin), whether currentPath already points there, and whether a
+// binary already exists at that target. It performs no writes.
+func resolveInstallTarget(currentPath string) (targetPath string, alreadyCorrect, targetExists bool) {
 	gopath := os.Getenv("GOPATH")
 	if gopath == "" {
 		home, _ := os.UserHomeDir()
@@ -428,62 +248,39 @@ func ensureBinaryInCorrectLocation(currentPath string) (string, error) {
 	}
 
 	targetDir := filepath.Join(gopath, "bin")
-	targetPath := filepath.Join(targetDir, binName)
+	targetPath = filepath.Join(targetDir, binName)
 
-	// If already in correct location, return as-is
 	if currentPath == targetPath {
-		return targetPath, nil
+		return targetPath, true, false
 	}
 
-	// Check if target already exists
-	if _, err := os.Stat(targetPath); err == nil {
-		// Target exists, ask user if they want to replace
-		var replace bool
-		huh.NewConfirm().
-			Title(fmt.Sprintf("Ya existe un somm en %s. ¿Reemplazar?", targetDir)).
-			Affirmative("Sí, reemplazar").
-			Negative("No, mantener el actual").
-			Value(&replace).Run()
+	_, err := os.Stat(targetPath)
+	return targetPath, false, err == nil
+}
 
-		if !replace {
-			return currentPath, nil
-		}
+// installBinary copies currentPath to targetPath, creating the target
+// directory if needed.
+func installBinary(currentPath, targetPath string) error {
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+		return fmt.Errorf("creando directorio: %w", err)
 	}
 
-	// Create target directory if needed
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return currentPath, fmt.Errorf("creando directorio: %w", err)
-	}
-
-	// Read source binary
 	sourceData, err := os.ReadFile(currentPath)
 	if err != nil {
-		return currentPath, fmt.Errorf("leyendo binario: %w", err)
+		return fmt.Errorf("leyendo binario: %w", err)
 	}
 
-	// Write to target
 	if err := os.WriteFile(targetPath, sourceData, 0755); err != nil {
-		return currentPath, fmt.Errorf("escribiendo binario: %w", err)
+		return fmt.Errorf("escribiendo binario: %w", err)
 	}
 
-	fmt.Printf("✅ Binario instalado en: %s\n", targetPath)
+	return nil
+}
 
-	// If source was in a temp/downloads folder, offer to clean up
-	if strings.Contains(currentPath, "Downloads") || strings.Contains(currentPath, "Temp") {
-		var cleanup bool
-		huh.NewConfirm().
-			Title("¿Eliminar el binario de la carpeta de descargas?").
-			Affirmative("Sí, eliminar").
-			Negative("No, mantener").
-			Value(&cleanup).Run()
-
-		if cleanup {
-			os.Remove(currentPath)
-			fmt.Println("✅ Binario original eliminado")
-		}
-	}
-
-	return targetPath, nil
+// isDownloadSource reports whether path looks like a Downloads/Temp folder,
+// worth offering to clean up once the binary has been installed elsewhere.
+func isDownloadSource(path string) bool {
+	return strings.Contains(path, "Downloads") || strings.Contains(path, "Temp")
 }
 
 func createPowerShellAlias() error {
@@ -635,10 +432,19 @@ func updateBinary(version string) error {
 		}
 	}
 
-	// Replace current binary
+	// Replace current binary. On Windows a running executable cannot be
+	// overwritten in place, but it can be renamed, so move it aside first
+	// and only then put the new binary in its original path.
+	oldPath := currentPath + ".old"
+	_ = os.Remove(oldPath) // clean up a leftover from a previous update, if any
+	if err := os.Rename(currentPath, oldPath); err != nil {
+		return fmt.Errorf("error moviendo binario actual: %w", err)
+	}
 	if err := os.Rename(extractedBinary, currentPath); err != nil {
+		_ = os.Rename(oldPath, currentPath) // restore so the tool keeps working
 		return fmt.Errorf("error reemplazando binario: %w", err)
 	}
+	_ = os.Remove(oldPath) // best effort; may still be locked while running
 
 	return nil
 }
