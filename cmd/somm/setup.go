@@ -44,7 +44,10 @@ func runSetup() {
 
 	// Check for updates
 	latestVersion, err := checkForUpdate()
-	if err == nil && latestVersion != version {
+	// Strip 'v' prefix for comparison (e.g., "v2.1.6" -> "2.1.6")
+	latestClean := strings.TrimPrefix(latestVersion, "v")
+	versionClean := strings.TrimPrefix(version, "v")
+	if err == nil && latestClean != versionClean {
 		fmt.Printf("📦 Nueva versión disponible: %s (actual: %s)\n\n", latestVersion, version)
 
 		var update bool
@@ -60,8 +63,7 @@ func runSetup() {
 				fmt.Printf("❌ Error actualizando: %v\n", err)
 			} else {
 				fmt.Println("✅ Actualizado a", latestVersion)
-				fmt.Println("🔄 Reiniciá el setup con: somm setup")
-				return
+				fmt.Println("🔄 Continuando con el setup...")
 			}
 		}
 		fmt.Println()
