@@ -41,6 +41,20 @@ func runSetup() {
 		_ = fs.Parse(os.Args[2:])
 	}
 
+	fmt.Println("🔧 Somm Setup Wizard")
+	fmt.Println("==============================")
+	fmt.Println()
+
+	// The wizard is a Bubble Tea program and needs a real controlling
+	// terminal (it opens /dev/tty directly for raw input on Unix). Bail out
+	// with a clear message instead of letting tea.Program crash when stdin
+	// isn't a terminal (piped/non-interactive contexts, e.g. CI).
+	if !isTerminal() {
+		fmt.Println("No hay una terminal interactiva disponible.")
+		fmt.Println("Corré \"somm setup\" desde una terminal real para usar el wizard.")
+		return
+	}
+
 	latestVersion, err := checkForUpdate()
 	latestClean := strings.TrimPrefix(latestVersion, "v")
 	versionClean := strings.TrimPrefix(version, "v")
