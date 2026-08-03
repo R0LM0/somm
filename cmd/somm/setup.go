@@ -42,12 +42,12 @@ func runSetup() {
 		_ = fs.Parse(os.Args[2:])
 	}
 
-	// Check for updates
+	// Check for updates (skip if fails or same version)
 	latestVersion, err := checkForUpdate()
 	// Strip 'v' prefix for comparison (e.g., "v2.1.6" -> "2.1.6")
 	latestClean := strings.TrimPrefix(latestVersion, "v")
 	versionClean := strings.TrimPrefix(version, "v")
-	if err == nil && latestClean != versionClean {
+	if err == nil && latestClean != versionClean && latestClean != "" {
 		fmt.Printf("📦 Nueva versión disponible: %s (actual: %s)\n\n", latestVersion, version)
 
 		var update bool
@@ -60,7 +60,8 @@ func runSetup() {
 		if update {
 			fmt.Println("\n🔄 Descargando actualización...")
 			if err := updateBinary(latestVersion); err != nil {
-				fmt.Printf("❌ Error actualizando: %v\n", err)
+				fmt.Printf("⚠️  No se pudo actualizar: %v\n", err)
+				fmt.Println("Podés descargar manualmente desde: https://github.com/R0LM0/somm/releases\n")
 			} else {
 				fmt.Println("✅ Actualizado a", latestVersion)
 				fmt.Println("🔄 Continuando con el setup...")
