@@ -46,6 +46,12 @@ func main() {
 		return
 	}
 
+	// Check for chart subcommand before any setup pre-flight.
+	if len(os.Args) > 1 && os.Args[1] == "chart" {
+		runChart(os.Args[2:])
+		return
+	}
+
 	skipSetup, remaining := parseSkipSetup(os.Args)
 	os.Args = remaining
 
@@ -66,6 +72,7 @@ func printUsage() {
 	fmt.Println("  somm                          Start MCP server (auto-setup if needed)")
 	fmt.Println("  somm setup                    Run setup wizard")
 	fmt.Println("  somm setup --force            Reconfigure existing installation")
+	fmt.Println("  somm chart                    Show quality/price Pareto frontier (console)")
 	fmt.Println("  somm --version                Show version")
 	fmt.Println("  somm --help                   Show this help")
 	fmt.Println()
