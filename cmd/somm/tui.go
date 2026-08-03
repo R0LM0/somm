@@ -79,7 +79,6 @@ func defaultProviders() []providerOption {
 	return []providerOption{
 		{id: "OpenCode", label: "OpenCode Go/Zen (requerido)", required: true, selected: true},
 		{id: "OpenRouter", label: "OpenRouter (opcional)"},
-		{id: "Kimi", label: "Kimi (opcional)"},
 	}
 }
 
@@ -98,8 +97,6 @@ func buildKeyFields(providers []string) []keyField {
 			title = "OpenCode API Key (requerido)"
 		case "OpenRouter":
 			title = "OpenRouter API Key (opcional)"
-		case "Kimi":
-			title = "Kimi API Key (opcional)"
 		}
 		ti := textinput.New()
 		ti.Placeholder = title
@@ -244,7 +241,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		} else {
 			m.updateAvailable = false
 			m.resultLines = []string{
-				fmt.Sprintf("Actualizado a %s — reiniciá \"somm setup\" para usar la nueva versión", msg.latestVersion),
+				fmt.Sprintf("%s Actualizado a %s — reiniciá \"somm setup\" para usar la nueva versión", successStyle.Render("✓"), detailStyle.Render(msg.latestVersion)),
 			}
 		}
 		return m, nil
@@ -339,7 +336,7 @@ func (m Model) updateMenu(msg tea.KeyMsg) (Model, tea.Cmd) {
 				m.screen = scrConfirm
 			} else {
 				m.err = nil
-				m.resultLines = []string{fmt.Sprintf("Ya estás en la última versión (%s)", m.currentVersion)}
+				m.resultLines = []string{fmt.Sprintf("Ya estás en la última versión (%s)", detailStyle.Render(m.currentVersion))}
 				m.screen = scrUpdateResult
 			}
 		case actQuit:
@@ -614,18 +611,18 @@ func doSaveConfigCmd(m Model) tea.Cmd {
 		if err := saveEnvFileFn(envPath, keys); err != nil {
 			return configDoneMsg{err: fmt.Errorf("guardando .env: %w", err)}
 		}
-		steps = append(steps, fmt.Sprintf("✓ .env guardado en %s", envPath))
+		steps = append(steps, fmt.Sprintf("%s .env guardado en %s", successStyle.Render("✓"), detailStyle.Render(envPath)))
 
 		updateMCPConfig(config, binaryPath)
 		if err := writeConfigFn(configPath, config); err != nil {
 			return configDoneMsg{err: fmt.Errorf("actualizando opencode.json: %w", err), steps: steps}
 		}
-		steps = append(steps, "✓ opencode.json actualizado")
+		steps = append(steps, successStyle.Render("✓")+" opencode.json actualizado")
 
 		if err := createAliasFn(); err != nil {
-			steps = append(steps, fmt.Sprintf("⚠ alias msetup no se pudo crear: %v", err))
+			steps = append(steps, fmt.Sprintf("%s alias msetup no se pudo crear: %s", warnStyle.Render("⚠"), detailStyle.Render(err.Error())))
 		} else {
-			steps = append(steps, "✓ alias msetup creado (reiniciá PowerShell para usarlo)")
+			steps = append(steps, successStyle.Render("✓")+" alias msetup creado "+detailStyle.Render("(reiniciá PowerShell para usarlo)"))
 		}
 
 		return configDoneMsg{steps: steps}
@@ -720,7 +717,7 @@ func (m Model) viewKeyInput() string {
 func (m Model) viewStatus() string {
 	var b strings.Builder
 	b.WriteString(successStyle.Render("✓ somm ya está configurado"))
-	b.WriteString(fmt.Sprintf("\n  Ubicación: %s\n\n", m.binaryPath))
+	b.WriteString(fmt.Sprintf("\n  Ubicación: %s\n\n", detailStyle.Render(m.binaryPath)))
 
 	if _, err := os.Stat(m.envPath); err == nil {
 		b.WriteString(successStyle.Render("✓ .env encontrado") + "\n")

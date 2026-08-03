@@ -25,6 +25,9 @@ var (
 	successStyle      = lipgloss.NewStyle().Foreground(colorSuccess)
 	warnStyle         = lipgloss.NewStyle().Foreground(colorWarn)
 	errorStyle        = lipgloss.NewStyle().Foreground(colorError)
+	// detailStyle sets off an inline path or version number from the
+	// surrounding sentence, e.g. "✓ .env guardado en <path>".
+	detailStyle = lipgloss.NewStyle().Italic(true).Foreground(colorMuted)
 )
 
 // renderScreen wraps a title, body and footer help line in the bordered
