@@ -14,19 +14,25 @@ import (
 func rewriteTransport(server *httptest.Server) *http.Client {
 	u, _ := url.Parse(server.URL)
 	return &http.Client{
-		Transport: &urlRewriteTransport{host: u.Host},
+		// A transport of its own, not the shared http.DefaultTransport: that
+		// global pools keep-alive connections by host:port, and two
+		// httptest.Server instances across different tests can end up
+		// reusing the same OS-assigned ephemeral port, letting one test's
+		// pooled connection leak into another test's requests.
+		Transport: &urlRewriteTransport{host: u.Host, inner: &http.Transport{}},
 	}
 }
 
 type urlRewriteTransport struct {
-	host string
+	host  string
+	inner http.RoundTripper
 }
 
 func (t *urlRewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	req = req.Clone(req.Context())
 	req.URL.Scheme = "http"
 	req.URL.Host = t.host
-	return http.DefaultTransport.RoundTrip(req)
+	return t.inner.RoundTrip(req)
 }
 
 func newClientWithServer(server *httptest.Server, ocKey, orKey, kimiKey string) *Client {
