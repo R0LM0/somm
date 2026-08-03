@@ -13,6 +13,7 @@ agent host you use.
 
 ## Features
 
+- **Auto-setup wizard** — detects missing API keys and guides you through configuration
 - List available models from OpenCode Go/Zen subscriptions
 - Cross-reference with OpenRouter benchmarks and pricing
 - Read agent selection criteria from the Gentle AI guide
@@ -24,6 +25,7 @@ agent host you use.
 - **Export safe config to opencode.json** (only the `model` field)
 - Automatic `.env` configuration loading
 - HTTP timeout, retry, and graceful degradation
+- **Multi-provider support** — OpenCode, OpenRouter, and Kimi
 
 ## Installation
 
@@ -47,12 +49,32 @@ make install
 
 ## Configuration
 
+### Quick setup (recommended)
+
+Just run `somm` — if no API keys are configured, the setup wizard launches automatically:
+
+```bash
+somm
+```
+
+The wizard will:
+1. Check if you already have API keys configured
+2. Ask which providers you want to use (OpenCode required, OpenRouter and Kimi optional)
+3. Guide you through pasting each API key
+4. Save the `.env` file and update `opencode.json`
+5. Start the server automatically
+
+### Manual setup
+
+If you prefer manual configuration, see the options below.
+
 ### Environment variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENCODE_API_KEY` | Yes | OpenCode Go/Zen subscription key |
 | `OPENROUTER_API_KEY` | No | OpenRouter API key for benchmarks |
+| `KIMI_API_KEY` | No | Kimi API key (optional provider) |
 | `SOMM_PROFILE` | No | Path to a role profile YAML file (see [Role profiles](#role-profiles)) |
 
 ### .env file
@@ -62,12 +84,21 @@ Create a `.env` file next to the binary:
 ```
 OPENCODE_API_KEY=sk-your-key-here
 OPENROUTER_API_KEY=sk-or-your-key-here
+KIMI_API_KEY=your-kimi-key-here
 ```
 
 ### Flags
 
 ```bash
 somm -opencode-api-key sk-xxx -openrouter-api-key sk-or-xxx -profile ./somm.yaml
+```
+
+### Non-interactive mode
+
+For CI/scripts, use `--skip-setup` to fail with a clear message instead of launching the wizard:
+
+```bash
+somm --skip-setup
 ```
 
 ### Role profiles
@@ -107,13 +138,29 @@ roles:
 
 ## Usage
 
-### Setup wizard
+### First run
+
+Just run `somm` — the auto-setup wizard handles everything:
+
+```bash
+somm
+```
+
+If API keys are missing, you'll see the setup wizard. If already configured, the server starts immediately.
+
+### Setup wizard (manual)
+
+You can also run the wizard explicitly:
 
 ```bash
 somm setup
 ```
 
-Detects your OpenCode config and wires Somm into `opencode.json` automatically.
+To reconfigure an existing installation:
+
+```bash
+somm setup --force
+```
 
 ### With OpenCode (manual)
 
