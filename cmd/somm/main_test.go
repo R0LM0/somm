@@ -34,6 +34,8 @@ func TestServerInitialize(t *testing.T) {
 
 	cmd := exec.Command(binary, "-opencode-api-key", "test-key")
 	cmd.Dir = repoRoot
+	// Set dummy API key to bypass auto-setup check
+	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=test-key")
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
