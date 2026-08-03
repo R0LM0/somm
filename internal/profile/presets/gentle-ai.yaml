@@ -1,0 +1,119 @@
+# gentle-ai preset: embedded default profile.
+#
+# Reproduces today's hardcoded AllAgentRoles() taxonomy (19 roles) exactly:
+# each role's former single BestMetric is expressed as a weights map with
+# one metric key at weight 1.0, and "cheapest" roles map to an empty
+# weights map (price-minimizing objective). Descriptions preserve the
+# original Spanish Criteria text.
+version: 1
+roles:
+  - id: orchestrator
+    description: "instruction following + contexto largo"
+    criticidad: "CRÍTICO"
+    weights:
+      intelligence: 1.0
+
+  - id: sdd-init
+    description: "contexto masivo + bajo costo"
+    criticidad: "MEDIA"
+    weights: {}
+
+  - id: sdd-onboard
+    description: "contexto largo + razonamiento moderado"
+    criticidad: "MEDIA"
+    weights:
+      intelligence: 1.0
+
+  - id: sdd-explore
+    description: "análisis multi-paso + razonamiento sobre código"
+    criticidad: "ALTA"
+    weights:
+      agentic: 1.0
+
+  - id: sdd-propose
+    description: "máximo razonamiento arquitectónico"
+    criticidad: "CRÍTICO"
+    weights:
+      intelligence: 1.0
+
+  - id: sdd-spec
+    description: "escritura técnica + output estructurado"
+    criticidad: "ALTA"
+    weights:
+      intelligence: 1.0
+
+  - id: sdd-design
+    description: "especialización visual/multimodal"
+    criticidad: "MEDIA"
+    weights:
+      intelligence: 1.0
+
+  - id: sdd-tasks
+    description: "velocidad + formato + costo mínimo"
+    criticidad: "BAJA"
+    weights: {}
+
+  - id: sdd-apply
+    description: "máxima capacidad de coding"
+    criticidad: "CRÍTICO"
+    weights:
+      coding: 1.0
+
+  - id: sdd-verify
+    description: "máximo razonamiento + different from apply"
+    criticidad: "CRÍTICO"
+    weights:
+      intelligence: 1.0
+
+  - id: sdd-archive
+    description: "costo mínimo absoluto"
+    criticidad: "BAJA"
+    weights: {}
+
+  - id: review-risk
+    description: "conocimiento seguridad + evidencia concreta"
+    criticidad: "CRÍTICO"
+    weights:
+      intelligence: 1.0
+
+  - id: review-readability
+    description: "juicio de estructura + mantenibilidad"
+    criticidad: "MEDIA"
+    weights:
+      intelligence: 1.0
+
+  - id: review-reliability
+    description: "behavior-first + edge cases"
+    criticidad: "ALTA"
+    weights:
+      intelligence: 1.0
+
+  - id: review-resilience
+    description: "patrones de fallo + SRE mindset"
+    criticidad: "ALTA"
+    weights:
+      intelligence: 1.0
+
+  - id: review-refuter
+    description: "rigor lógico + independencia"
+    criticidad: "ALTA"
+    weights:
+      intelligence: 1.0
+
+  - id: jd-judge-a
+    description: "razonamiento adversarial máximo"
+    criticidad: "CRÍTICO"
+    weights:
+      intelligence: 1.0
+
+  - id: jd-judge-b
+    description: "razonamiento adversarial máximo"
+    criticidad: "CRÍTICO"
+    weights:
+      intelligence: 1.0
+
+  - id: jd-fix-agent
+    description: "instruction following preciso + coding"
+    criticidad: "ALTA"
+    weights:
+      coding: 1.0
