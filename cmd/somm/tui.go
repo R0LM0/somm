@@ -613,7 +613,9 @@ func doSaveConfigCmd(m Model) tea.Cmd {
 		}
 		steps = append(steps, fmt.Sprintf("%s .env guardado en %s", successStyle.Render("✓"), detailStyle.Render(envPath)))
 
-		updateMCPConfig(config, binaryPath)
+		if err := updateMCPConfig(config, binaryPath); err != nil {
+			return configDoneMsg{err: fmt.Errorf("preparando entrada MCP: %w", err), steps: steps}
+		}
 		if err := writeConfigFn(configPath, config); err != nil {
 			return configDoneMsg{err: fmt.Errorf("actualizando opencode.json: %w", err), steps: steps}
 		}

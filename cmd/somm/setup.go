@@ -17,14 +17,34 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// openCodeConfig holds opencode.json as raw JSON, not a typed struct.
+// opencode.json commonly carries agent/model assignments, permissions, and
+// other MCP servers that somm has no business knowing the shape of — the
+// only thing somm ever needs to touch is the "somm" entry inside "mcp".
+// Round-tripping through a struct that only declares MCP would silently
+// drop every other key on write (see raw/MCP below).
 type openCodeConfig struct {
-	MCP map[string]mcpEntry `json:"mcp"`
+	raw map[string]json.RawMessage // the full document, byte-for-byte except "mcp"
+	MCP map[string]json.RawMessage // the "mcp" object, byte-for-byte except the "somm" key
 }
 
 type mcpEntry struct {
 	Command []string `json:"command"`
 	Enabled bool     `json:"enabled"`
 	Type    string   `json:"type"`
+}
+
+// sommEntry decodes the "somm" MCP entry, if present and well-formed.
+func (c *openCodeConfig) sommEntry() (mcpEntry, bool) {
+	raw, ok := c.MCP["somm"]
+	if !ok {
+		return mcpEntry{}, false
+	}
+	var entry mcpEntry
+	if err := json.Unmarshal(raw, &entry); err != nil {
+		return mcpEntry{}, false
+	}
+	return entry, true
 }
 
 // runSetup runs the non-interactive preflight (parse --force, check for
@@ -104,7 +124,7 @@ func runSetup() {
 // resolveBinaryAndEnv returns the resolved binary path and the .env path next
 // to it. It prefers the path recorded in opencode.json when available.
 func resolveBinaryAndEnv(config *openCodeConfig) (binaryPath, envPath string, err error) {
-	if entry, exists := config.MCP["somm"]; exists && len(entry.Command) > 0 && entry.Command[0] != "" {
+	if entry, ok := config.sommEntry(); ok && len(entry.Command) > 0 && entry.Command[0] != "" {
 		binaryPath = entry.Command[0]
 	} else if binaryPath, err = findBinary(); err != nil {
 		binaryPath, _ = os.Executable()
@@ -136,8 +156,8 @@ func isAlreadyConfigured(envPath string, config *openCodeConfig) (bool, string) 
 		return false, ""
 	}
 
-	entry, exists := config.MCP["somm"]
-	if !exists || len(entry.Command) == 0 || entry.Command[0] == "" {
+	entry, ok := config.sommEntry()
+	if !ok || len(entry.Command) == 0 || entry.Command[0] == "" {
 		return false, ""
 	}
 
@@ -176,12 +196,20 @@ func saveEnvFile(envPath string, keys map[string]string) error {
 	return os.WriteFile(envPath, []byte(envContent.String()), 0600)
 }
 
-func updateMCPConfig(config *openCodeConfig, binaryPath string) {
-	config.MCP["somm"] = mcpEntry{
+// updateMCPConfig sets the "somm" entry inside config.MCP, leaving every
+// other MCP entry and every other top-level key untouched.
+func updateMCPConfig(config *openCodeConfig, binaryPath string) error {
+	entry := mcpEntry{
 		Command: []string{binaryPath},
 		Enabled: true,
 		Type:    "local",
 	}
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("encoding somm MCP entry: %w", err)
+	}
+	config.MCP["somm"] = raw
+	return nil
 }
 
 func findOpenCodeConfig() (string, error) {
@@ -204,20 +232,41 @@ func readConfig(path string) (*openCodeConfig, error) {
 		return nil, err
 	}
 
-	var config openCodeConfig
-	if err := json.Unmarshal(data, &config); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
-
-	if config.MCP == nil {
-		config.MCP = make(map[string]mcpEntry)
+	if raw == nil {
+		raw = map[string]json.RawMessage{}
 	}
 
-	return &config, nil
+	mcp := map[string]json.RawMessage{}
+	if mcpRaw, ok := raw["mcp"]; ok {
+		if err := json.Unmarshal(mcpRaw, &mcp); err != nil {
+			return nil, fmt.Errorf("parsing mcp entry: %w", err)
+		}
+	}
+	if mcp == nil {
+		mcp = map[string]json.RawMessage{}
+	}
+
+	return &openCodeConfig{raw: raw, MCP: mcp}, nil
 }
 
+// writeConfig writes config.raw back to disk after folding config.MCP into
+// its "mcp" key — every other key, and every mcp entry besides "somm", comes
+// back out byte-for-byte as it was read.
 func writeConfig(path string, config *openCodeConfig) error {
-	data, err := json.MarshalIndent(config, "", "  ")
+	mcpData, err := json.MarshalIndent(config.MCP, "", "  ")
+	if err != nil {
+		return err
+	}
+	if config.raw == nil {
+		config.raw = map[string]json.RawMessage{}
+	}
+	config.raw["mcp"] = mcpData
+
+	data, err := json.MarshalIndent(config.raw, "", "  ")
 	if err != nil {
 		return err
 	}

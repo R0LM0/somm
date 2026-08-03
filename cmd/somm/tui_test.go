@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -25,7 +26,7 @@ func testModel(t *testing.T) Model {
 
 	m := newModel(modelInit{
 		configPath:        filepath.Join(tmp, "opencode.json"),
-		config:            &openCodeConfig{MCP: map[string]mcpEntry{}},
+		config:            &openCodeConfig{raw: map[string]json.RawMessage{}, MCP: map[string]json.RawMessage{}},
 		binaryPath:        binaryPath,
 		envPath:           filepath.Join(tmp, ".env"),
 		alreadyConfigured: false,

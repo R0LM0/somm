@@ -10,6 +10,15 @@ import (
 	"testing"
 )
 
+func mustMarshal(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshaling %#v: %v", v, err)
+	}
+	return data
+}
+
 func TestFindOpenCodeConfig(t *testing.T) {
 	home := t.TempDir()
 	if runtime.GOOS == "windows" {
@@ -126,7 +135,7 @@ func TestIsAlreadyConfigured(t *testing.T) {
 	binPath := filepath.Join(tmp, "somm")
 
 	// Neither .env nor config configured.
-	if configured, _ := isAlreadyConfigured(envPath, &openCodeConfig{MCP: map[string]mcpEntry{}}); configured {
+	if configured, _ := isAlreadyConfigured(envPath, &openCodeConfig{MCP: map[string]json.RawMessage{}}); configured {
 		t.Error("expected not configured when .env and config are empty")
 	}
 
@@ -134,14 +143,14 @@ func TestIsAlreadyConfigured(t *testing.T) {
 	if err := os.WriteFile(envPath, []byte("OPENCODE_API_KEY=secret\n"), 0600); err != nil {
 		t.Fatalf("writing .env: %v", err)
 	}
-	if configured, _ := isAlreadyConfigured(envPath, &openCodeConfig{MCP: map[string]mcpEntry{}}); configured {
+	if configured, _ := isAlreadyConfigured(envPath, &openCodeConfig{MCP: map[string]json.RawMessage{}}); configured {
 		t.Error("expected not configured when opencode.json has no somm entry")
 	}
 
 	// Both configured.
 	config := &openCodeConfig{
-		MCP: map[string]mcpEntry{
-			"somm": {Command: []string{binPath}, Enabled: true, Type: "local"},
+		MCP: map[string]json.RawMessage{
+			"somm": mustMarshal(t, mcpEntry{Command: []string{binPath}, Enabled: true, Type: "local"}),
 		},
 	}
 	configured, gotPath := isAlreadyConfigured(envPath, config)
@@ -193,7 +202,7 @@ func TestUpdateMCPConfig(t *testing.T) {
 	configPath := filepath.Join(tmp, "opencode.json")
 	binaryPath := filepath.Join(tmp, "somm")
 
-	initial := &openCodeConfig{MCP: map[string]mcpEntry{}}
+	initial := &openCodeConfig{raw: map[string]json.RawMessage{}, MCP: map[string]json.RawMessage{}}
 	if err := writeConfig(configPath, initial); err != nil {
 		t.Fatalf("writing initial config: %v", err)
 	}
@@ -202,7 +211,9 @@ func TestUpdateMCPConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading config: %v", err)
 	}
-	updateMCPConfig(config, binaryPath)
+	if err := updateMCPConfig(config, binaryPath); err != nil {
+		t.Fatalf("updateMCPConfig: %v", err)
+	}
 	if err := writeConfig(configPath, config); err != nil {
 		t.Fatalf("writing updated config: %v", err)
 	}
@@ -211,7 +222,9 @@ func TestUpdateMCPConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading updated config: %v", err)
 	}
-	var parsed openCodeConfig
+	var parsed struct {
+		MCP map[string]mcpEntry `json:"mcp"`
+	}
 	if err := json.Unmarshal(data, &parsed); err != nil {
 		t.Fatalf("parsing updated config: %v", err)
 	}
@@ -228,6 +241,99 @@ func TestUpdateMCPConfig(t *testing.T) {
 	}
 	if entry.Type != "local" {
 		t.Errorf("type = %q, want local", entry.Type)
+	}
+}
+
+// TestReadWriteConfig_PreservesUnrelatedData is a regression test: earlier,
+// openCodeConfig only declared an "mcp" field, so round-tripping through
+// readConfig/writeConfig silently dropped every other key in opencode.json
+// (agent/model assignments, permissions, other MCP servers' extra fields)
+// the instant somm setup ran. Real opencode.json files carry exactly this
+// kind of data (e.g. from gentle-ai), so this must survive untouched.
+func TestReadWriteConfig_PreservesUnrelatedData(t *testing.T) {
+	tmp := t.TempDir()
+	configPath := filepath.Join(tmp, "opencode.json")
+	binaryPath := filepath.Join(tmp, "somm")
+
+	original := `{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "gentle-orchestrator": {
+      "model": "opencode-go/glm-5.2"
+    }
+  },
+  "permission": {
+    "edit": "allow"
+  },
+  "mcp": {
+    "chrome-devtools": {
+      "command": ["npx", "chrome-devtools-mcp"],
+      "enabled": true,
+      "type": "local",
+      "environment": {"HEADLESS": "true"}
+    }
+  }
+}`
+	if err := os.WriteFile(configPath, []byte(original), 0644); err != nil {
+		t.Fatalf("writing original config: %v", err)
+	}
+
+	config, err := readConfig(configPath)
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	if err := updateMCPConfig(config, binaryPath); err != nil {
+		t.Fatalf("updateMCPConfig: %v", err)
+	}
+	if err := writeConfig(configPath, config); err != nil {
+		t.Fatalf("writing updated config: %v", err)
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("reading updated config: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("parsing updated config: %v", err)
+	}
+
+	if got["$schema"] != "https://opencode.ai/config.json" {
+		t.Errorf("$schema was lost or changed: %v", got["$schema"])
+	}
+	agent, ok := got["agent"].(map[string]any)
+	if !ok {
+		t.Fatal("agent key was lost")
+	}
+	orchestrator, ok := agent["gentle-orchestrator"].(map[string]any)
+	if !ok || orchestrator["model"] != "opencode-go/glm-5.2" {
+		t.Errorf("agent.gentle-orchestrator.model was lost or changed: %v", agent["gentle-orchestrator"])
+	}
+	permission, ok := got["permission"].(map[string]any)
+	if !ok || permission["edit"] != "allow" {
+		t.Errorf("permission key was lost or changed: %v", got["permission"])
+	}
+
+	mcp, ok := got["mcp"].(map[string]any)
+	if !ok {
+		t.Fatal("mcp key was lost")
+	}
+	chrome, ok := mcp["chrome-devtools"].(map[string]any)
+	if !ok {
+		t.Fatal("existing mcp entry chrome-devtools was lost")
+	}
+	env, ok := chrome["environment"].(map[string]any)
+	if !ok || env["HEADLESS"] != "true" {
+		t.Errorf("chrome-devtools.environment (a field mcpEntry doesn't model) was lost: %v", chrome["environment"])
+	}
+
+	somm, ok := mcp["somm"].(map[string]any)
+	if !ok {
+		t.Fatal("expected the new somm mcp entry to be present")
+	}
+	cmd, ok := somm["command"].([]any)
+	if !ok || len(cmd) != 1 || cmd[0] != binaryPath {
+		t.Errorf("somm.command = %v, want [%q]", somm["command"], binaryPath)
 	}
 }
 
@@ -336,8 +442,8 @@ func TestIsAlreadyConfigured_ReturnsBinaryPath(t *testing.T) {
 
 	// Create config with somm entry
 	config := &openCodeConfig{
-		MCP: map[string]mcpEntry{
-			"somm": {Command: []string{binPath}, Enabled: true, Type: "local"},
+		MCP: map[string]json.RawMessage{
+			"somm": mustMarshal(t, mcpEntry{Command: []string{binPath}, Enabled: true, Type: "local"}),
 		},
 	}
 
