@@ -212,7 +212,11 @@ func TestE2E_Version_ShowsVersion(t *testing.T) {
 			}
 
 			out := string(output)
-			if !strings.Contains(out, "somm") || !strings.Contains(out, "dev") {
+			// The exact version string varies with build context ("dev" for
+			// a plain `go build`, a module version like "v2.3.1[+dirty]"
+			// when runtime/debug.ReadBuildInfo() finds one) — just check it
+			// printed a version line at all.
+			if !strings.Contains(out, "somm") || !strings.Contains(out, "commit:") {
 				t.Errorf("expected version output, got:\n%s", out)
 			}
 			// Should NOT show setup wizard

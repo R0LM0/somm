@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 
@@ -26,6 +27,21 @@ var (
 	commit  = "unknown"
 	date    = "unknown"
 )
+
+// init falls back to the module version Go embeds automatically for
+// `go install module@version` builds. GoReleaser's own builds already set
+// -ldflags with the real version/commit/date, so this only kicks in for
+// binaries compiled straight from source without that override.
+func init() {
+	if version != "dev" {
+		return
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return
+	}
+	version = info.Main.Version
+}
 
 func main() {
 	// Handle --help and --version before any setup pre-flight.
