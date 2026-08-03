@@ -548,7 +548,10 @@ func updateBinary(version string) error {
 		extension = ".zip"
 	}
 
-	filename := fmt.Sprintf("somm_%s_%s_%s%s", version, osName, arch, extension)
+	// Strip leading 'v' from version for filename (e.g., "v2.1.4" -> "2.1.4")
+	fileVersion := strings.TrimPrefix(version, "v")
+
+	filename := fmt.Sprintf("somm_%s_%s_%s%s", fileVersion, osName, arch, extension)
 	url := fmt.Sprintf("https://github.com/R0LM0/somm/releases/download/%s/%s", version, filename)
 
 	// Download
