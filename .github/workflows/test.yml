@@ -22,6 +22,11 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
       
+      - name: Create mock opencode.json
+        run: |
+          mkdir -p ~/.config/opencode
+          echo '{"mcp":{}}' > ~/.config/opencode/opencode.json
+      
       - name: Download dependencies
         run: go mod download
       

@@ -282,9 +282,25 @@ func TestE2E_SommSetup_WithNoKey_ShowsWizard(t *testing.T) {
 		t.Skipf("skipping: failed to build somm binary: %v", err)
 	}
 
+	// Create mock opencode.json in temp home directory
+	tmpHome := t.TempDir()
+	configDir := filepath.Join(tmpHome, ".config", "opencode")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("creating config dir: %v", err)
+	}
+	mockConfig := filepath.Join(configDir, "opencode.json")
+	if err := os.WriteFile(mockConfig, []byte(`{"mcp":{}}`), 0644); err != nil {
+		t.Fatalf("writing mock config: %v", err)
+	}
+
+	// Override HOME to use temp directory
 	cmd := exec.Command(binary, "setup")
 	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=")
+	cmd.Env = append(os.Environ(),
+		"OPENCODE_API_KEY=",
+		"HOME="+tmpHome,
+		"USERPROFILE="+tmpHome,
+	)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
