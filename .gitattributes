@@ -1,0 +1,5 @@
+# Golden test fixtures are compared byte-for-byte against Go-generated
+# output, which always uses LF. Without this, Windows checkouts convert
+# them to CRLF (Git for Windows' default core.autocrlf=true) and the
+# comparison fails only on windows-latest CI.
+*.golden text eol=lf
