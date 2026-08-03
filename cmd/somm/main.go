@@ -28,6 +28,18 @@ var (
 )
 
 func main() {
+	// Handle --help and --version before any setup pre-flight.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--help", "-help", "help":
+			printUsage()
+			return
+		case "--version", "-version", "version":
+			fmt.Printf("somm %s (commit: %s, built: %s)\n", version, commit, date)
+			return
+		}
+	}
+
 	// Check for setup subcommand before any setup pre-flight.
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		runSetup()
@@ -45,6 +57,37 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[somm] Fatal error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func printUsage() {
+	fmt.Println("Somm — Model Advisor MCP Server")
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Println("  somm                          Start MCP server (auto-setup if needed)")
+	fmt.Println("  somm setup                    Run setup wizard")
+	fmt.Println("  somm setup --force            Reconfigure existing installation")
+	fmt.Println("  somm --version                Show version")
+	fmt.Println("  somm --help                   Show this help")
+	fmt.Println()
+	fmt.Println("Flags:")
+	fmt.Println("  -opencode-api-key string      OpenCode API key (required)")
+	fmt.Println("  -openrouter-api-key string    OpenRouter API key (optional)")
+	fmt.Println("  -kimi-api-key string          Kimi API key (optional)")
+	fmt.Println("  -profile string               Path to role profile YAML file")
+	fmt.Println("  --skip-setup                  Skip auto-setup (for CI/scripts)")
+	fmt.Println()
+	fmt.Println("Environment Variables:")
+	fmt.Println("  OPENCODE_API_KEY              OpenCode Go/Zen subscription key (required)")
+	fmt.Println("  OPENROUTER_API_KEY            OpenRouter API key (optional)")
+	fmt.Println("  KIMI_API_KEY                  Kimi API key (optional)")
+	fmt.Println("  SOMM_PROFILE                  Path to role profile YAML file")
+	fmt.Println()
+	fmt.Println("Examples:")
+	fmt.Println("  somm                          # Start server with auto-setup")
+	fmt.Println("  somm setup                    # Run setup wizard")
+	fmt.Println("  somm -opencode-api-key sk-xxx # Start with explicit key")
+	fmt.Println()
+	fmt.Println("Documentation: https://github.com/R0LM0/somm")
 }
 
 // parseSkipSetup detects --skip-setup and returns the argument list without it
