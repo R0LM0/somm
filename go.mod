@@ -1,4 +1,4 @@
-module github.com/R0LM0/somm
+module github.com/R0LM0/somm/v2
 
 go 1.26
 

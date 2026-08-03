@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/R0LM0/somm/internal/profile"
+	"github.com/R0LM0/somm/v2/internal/profile"
 )
 
 // mkModel builds an EnrichedModel for scoring-level unit tests. pricePerM is

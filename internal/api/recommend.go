@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/R0LM0/somm/internal/profile"
+	"github.com/R0LM0/somm/v2/internal/profile"
 )
 
 const maxScorePoints = 10

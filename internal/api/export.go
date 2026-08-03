@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/R0LM0/somm/internal/profile"
+	"github.com/R0LM0/somm/v2/internal/profile"
 )
 
 // ConfigChange describes a single model change for an agent.

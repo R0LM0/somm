@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/R0LM0/somm/internal/guide"
+	"github.com/R0LM0/somm/v2/internal/guide"
 )
 
 func TestExtract(t *testing.T) {

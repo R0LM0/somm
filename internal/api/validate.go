@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/R0LM0/somm/internal/profile"
+	"github.com/R0LM0/somm/v2/internal/profile"
 )
 
 // ValidationResult contains the full validation output.

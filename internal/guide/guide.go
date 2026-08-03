@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/R0LM0/somm/internal/profile"
+	"github.com/R0LM0/somm/v2/internal/profile"
 )
 
 // guia_gentle_ai.md is kept embedded as the gentle-ai preset's reference

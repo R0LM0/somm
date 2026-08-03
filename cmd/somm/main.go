@@ -13,9 +13,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/R0LM0/somm/internal/api"
-	"github.com/R0LM0/somm/internal/guide"
-	"github.com/R0LM0/somm/internal/profile"
+	"github.com/R0LM0/somm/v2/internal/api"
+	"github.com/R0LM0/somm/v2/internal/guide"
+	"github.com/R0LM0/somm/v2/internal/profile"
 	"github.com/joho/godotenv"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/term"

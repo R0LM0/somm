@@ -61,7 +61,7 @@ func runSetup() {
 			fmt.Println("\n🔄 Descargando actualización...")
 			if err := updateBinary(latestVersion); err != nil {
 				fmt.Printf("⚠️  No se pudo actualizar: %v\n", err)
-				fmt.Println("Podés descargar manualmente desde: https://github.com/R0LM0/somm/releases\n")
+				fmt.Println("Podés descargar manualmente desde: https://github.com/R0LM0/somm/releases")
 			} else {
 				fmt.Println("✅ Actualizado a", latestVersion)
 				fmt.Println("🔄 Continuando con el setup...")
