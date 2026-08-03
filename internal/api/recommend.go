@@ -3,36 +3,29 @@ package api
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
+
+	"github.com/R0LM0/somm/internal/profile"
 )
 
-// maxScorePoints is the scale factor for the configuration score (0-10).
 const maxScorePoints = 10
-
-// AgentRole defines a role that needs a model recommendation.
-type AgentRole struct {
-	ID          string
-	Name        string
-	Criticidad  string
-	Criteria    string
-	BestMetric  string // "intelligence", "coding", "agentic", or "cheapest"
-}
 
 // Recommendation is the output for a single agent role.
 type Recommendation struct {
-	Agent       string   `json:"agent"`
-	Criticidad  string   `json:"criticidad"`
-	Model       string   `json:"model"`
-	OCID        string   `json:"ocId"`
-	Provider    string   `json:"provider"`
-	PriceInput  float64  `json:"priceInput"`
-	PriceOutput float64  `json:"priceOutput"`
+	Agent        string   `json:"agent"`
+	Criticidad   string   `json:"criticidad"`
+	Model        string   `json:"model"`
+	OCID         string   `json:"ocId"`
+	Provider     string   `json:"provider"`
+	PriceInput   float64  `json:"priceInput"`
+	PriceOutput  float64  `json:"priceOutput"`
 	Intelligence *float64 `json:"intelligence,omitempty"`
-	Coding      *float64 `json:"coding,omitempty"`
-	Agentic     *float64 `json:"agentic,omitempty"`
-	ContextLen  *int64   `json:"contextLength,omitempty"`
-	Reason      string   `json:"reason"`
+	Coding       *float64 `json:"coding,omitempty"`
+	Agentic      *float64 `json:"agentic,omitempty"`
+	ContextLen   *int64   `json:"contextLength,omitempty"`
+	Reason       string   `json:"reason"`
 }
 
 // ProviderStatus describes which providers are available.
@@ -41,34 +34,9 @@ type ProviderStatus struct {
 	Configured bool   `json:"configured"`
 }
 
-// AllAgentRoles returns the complete list of agent roles with their criteria.
-func AllAgentRoles() []AgentRole {
-	return []AgentRole{
-		{ID: "orchestrator", Name: "Orchestrator", Criticidad: "CRÍTICO", Criteria: "instruction following + contexto largo", BestMetric: "intelligence"},
-		{ID: "sdd-init", Name: "SDD Init", Criticidad: "MEDIA", Criteria: "contexto masivo + bajo costo", BestMetric: "cheapest"},
-		{ID: "sdd-onboard", Name: "SDD Onboard", Criticidad: "MEDIA", Criteria: "contexto largo + razonamiento moderado", BestMetric: "intelligence"},
-		{ID: "sdd-explore", Name: "SDD Explore", Criticidad: "ALTA", Criteria: "análisis multi-paso + razonamiento sobre código", BestMetric: "agentic"},
-		{ID: "sdd-propose", Name: "SDD Propose", Criticidad: "CRÍTICO", Criteria: "máximo razonamiento arquitectónico", BestMetric: "intelligence"},
-		{ID: "sdd-spec", Name: "SDD Spec", Criticidad: "ALTA", Criteria: "escritura técnica + output estructurado", BestMetric: "intelligence"},
-		{ID: "sdd-design", Name: "SDD Design", Criticidad: "MEDIA", Criteria: "especialización visual/multimodal", BestMetric: "intelligence"},
-		{ID: "sdd-tasks", Name: "SDD Tasks", Criticidad: "BAJA", Criteria: "velocidad + formato + costo mínimo", BestMetric: "cheapest"},
-		{ID: "sdd-apply", Name: "SDD Apply", Criticidad: "CRÍTICO", Criteria: "máxima capacidad de coding", BestMetric: "coding"},
-		{ID: "sdd-verify", Name: "SDD Verify", Criticidad: "CRÍTICO", Criteria: "máximo razonamiento + different from apply", BestMetric: "intelligence"},
-		{ID: "sdd-archive", Name: "SDD Archive", Criticidad: "BAJA", Criteria: "costo mínimo absoluto", BestMetric: "cheapest"},
-		{ID: "review-risk", Name: "Review Risk", Criticidad: "CRÍTICO", Criteria: "conocimiento seguridad + evidencia concreta", BestMetric: "intelligence"},
-		{ID: "review-readability", Name: "Review Readability", Criticidad: "MEDIA", Criteria: "juicio de estructura + mantenibilidad", BestMetric: "intelligence"},
-		{ID: "review-reliability", Name: "Review Reliability", Criticidad: "ALTA", Criteria: "behavior-first + edge cases", BestMetric: "intelligence"},
-		{ID: "review-resilience", Name: "Review Resilience", Criticidad: "ALTA", Criteria: "patrones de fallo + SRE mindset", BestMetric: "intelligence"},
-		{ID: "review-refuter", Name: "Review Refuter", Criticidad: "ALTA", Criteria: "rigor lógico + independencia", BestMetric: "intelligence"},
-		{ID: "jd-judge-a", Name: "JD Judge A", Criticidad: "CRÍTICO", Criteria: "razonamiento adversarial máximo", BestMetric: "intelligence"},
-		{ID: "jd-judge-b", Name: "JD Judge B", Criticidad: "CRÍTICO", Criteria: "razonamiento adversarial máximo", BestMetric: "intelligence"},
-		{ID: "jd-fix-agent", Name: "JD Fix Agent", Criticidad: "ALTA", Criteria: "instruction following preciso + coding", BestMetric: "coding"},
-	}
-}
-
 // filterRoles returns only the roles whose IDs are in the filter list.
 // If filter is empty, all roles are returned.
-func filterRoles(all []AgentRole, filter []string) []AgentRole {
+func filterRoles(all []profile.Role, filter []string) []profile.Role {
 	if len(filter) == 0 {
 		return all
 	}
@@ -76,7 +44,7 @@ func filterRoles(all []AgentRole, filter []string) []AgentRole {
 	for _, f := range filter {
 		wanted[f] = true
 	}
-	var result []AgentRole
+	var result []profile.Role
 	for _, r := range all {
 		if wanted[r.ID] {
 			result = append(result, r)
@@ -85,17 +53,29 @@ func filterRoles(all []AgentRole, filter []string) []AgentRole {
 	return result
 }
 
-// scoredModel pairs a model with its score for a specific metric.
+// scoredModel pairs a candidate model with its computed scores for a
+// specific role.
+//
+//   - qraw holds the raw weighted sum (Σ weight_m * raw_m) for weighted
+//     roles, or the intelligence-based tiebreak value (50.0 fallback when
+//     null) for empty-weights price-minimizing roles. The quality/price
+//     ratio and winner tiebreak always use qraw — see design Decision 1.
+//   - qnorm holds the min-max normalized weighted sum, populated only for
+//     roles weighting >=2 metrics. It is an internal quality comparison
+//     value only and never feeds the ratio (design Decision 2).
+//   - price is the input price per 1M tokens.
 type scoredModel struct {
 	model EnrichedModel
-	score float64
-	price float64 // input price per 1M tokens
+	qraw  float64
+	qnorm float64
+	price float64
 }
 
-// RecommendConfig computes the best model for each agent role based on
-// available models and their benchmarks/pricing. It returns the list of
-// provider statuses and recommendations sorted by criticidad.
-func RecommendConfig(ctx context.Context, client *Client, roles []string) ([]ProviderStatus, []Recommendation, error) {
+// RecommendConfig computes the best model for each role in the active
+// Profile based on available models and their benchmarks/pricing. It
+// returns the list of provider statuses and recommendations sorted by
+// criticidad.
+func RecommendConfig(ctx context.Context, client *Client, prof *profile.Profile, roleFilter []string) ([]ProviderStatus, []Recommendation, error) {
 	providers := []ProviderStatus{
 		{Name: "OpenCode Go", Configured: client.OCAPIKey != ""},
 		{Name: "OpenRouter", Configured: client.ORAPIKey != ""},
@@ -115,18 +95,20 @@ func RecommendConfig(ctx context.Context, client *Client, roles []string) ([]Pro
 		return providers, nil, fmt.Errorf("no models available from configured providers")
 	}
 
-	agentRoles := filterRoles(AllAgentRoles(), roles)
-	if len(agentRoles) == 0 {
-		return providers, nil, fmt.Errorf("no matching agent roles for filter: %v", roles)
+	roles := filterRoles(prof.Roles, roleFilter)
+	if len(roles) == 0 {
+		return providers, nil, fmt.Errorf("no matching agent roles for filter: %v", roleFilter)
 	}
 
-	// Track which models are already assigned.
+	// Track which models are already assigned, and which provider family
+	// was assigned to each role (for exclude_family_of).
 	assignmentCount := make(map[string]int)
+	assignedFamily := make(map[string]string)
 
 	// Score models for each role and pick the best.
-	recs := make([]Recommendation, 0, len(agentRoles))
-	for _, role := range agentRoles {
-		best := findBestModel(models, role, assignmentCount)
+	recs := make([]Recommendation, 0, len(roles))
+	for _, role := range roles {
+		best := findBestModel(models, role, assignmentCount, assignedFamily)
 		if best == nil {
 			recs = append(recs, Recommendation{
 				Agent:      role.ID,
@@ -137,6 +119,7 @@ func RecommendConfig(ctx context.Context, client *Client, roles []string) ([]Pro
 		}
 
 		assignmentCount[best.model.OCID]++
+		assignedFamily[role.ID] = deriveProvider(best.model.OCID)
 
 		var priceInput, priceOutput float64
 		if best.model.Pricing != nil {
@@ -145,18 +128,18 @@ func RecommendConfig(ctx context.Context, client *Client, roles []string) ([]Pro
 		}
 
 		rec := Recommendation{
-			Agent:       role.ID,
-			Criticidad:  role.Criticidad,
-			Model:       best.model.OCName,
-			OCID:        best.model.OCID,
-			Provider:    deriveProvider(best.model.OCID),
-			PriceInput:  priceInput,
-			PriceOutput: priceOutput,
+			Agent:        role.ID,
+			Criticidad:   role.Criticidad,
+			Model:        best.model.OCName,
+			OCID:         best.model.OCID,
+			Provider:     deriveProvider(best.model.OCID),
+			PriceInput:   priceInput,
+			PriceOutput:  priceOutput,
 			Intelligence: best.model.Benchmarks.Intelligence,
-			Coding:      best.model.Benchmarks.Coding,
-			Agentic:     best.model.Benchmarks.Agentic,
-			ContextLen:  best.model.ContextLength,
-			Reason:      buildReason(role, best),
+			Coding:       best.model.Benchmarks.Coding,
+			Agentic:      best.model.Benchmarks.Agentic,
+			ContextLen:   best.model.ContextLength,
+			Reason:       buildReason(role, best),
 		}
 		recs = append(recs, rec)
 	}
@@ -171,113 +154,243 @@ func RecommendConfig(ctx context.Context, client *Client, roles []string) ([]Pro
 }
 
 // findBestModel selects the best model for a given role, respecting the
-// max-2-assignments-per-model rule. When all models are already assigned twice,
-// it relaxes the constraint to avoid returning nil.
-func findBestModel(models []EnrichedModel, role AgentRole, used map[string]int) *scoredModel {
+// max-2-assignments-per-model rule. When all models are already assigned
+// twice, it relaxes the constraint to max-3 to avoid returning nil. Hard
+// constraints (min_context, max_input_price, requires, exclude_family_of)
+// are never relaxed.
+func findBestModel(models []EnrichedModel, role profile.Role, used map[string]int, assignedFamily map[string]string) *scoredModel {
 	// First pass: try with max-2 constraint.
-	candidates := collectCandidates(models, role, used, 2)
+	candidates := collectCandidates(models, role, used, 2, assignedFamily)
 	if len(candidates) == 0 {
-		// Second pass: relax constraint to max-3 if no candidates found.
-		candidates = collectCandidates(models, role, used, 3)
+		// Second pass: relax the assignment cap to max-3 if no candidates found.
+		candidates = collectCandidates(models, role, used, 3, assignedFamily)
 	}
 	if len(candidates) == 0 {
 		return nil
 	}
 
-	// For "cheapest" metric, sort by price first (ascending), then by score as tiebreaker.
-	if role.BestMetric == "cheapest" {
+	// Empty weights: price-minimizing objective. Sort by price ascending,
+	// tiebreak by intelligence descending (qraw holds that tiebreak value).
+	if len(role.Weights) == 0 {
 		sort.Slice(candidates, func(i, j int) bool {
 			if candidates[i].price != candidates[j].price {
 				return candidates[i].price < candidates[j].price
 			}
-			return candidates[i].score > candidates[j].score
+			return candidates[i].qraw > candidates[j].qraw
 		})
 		return &candidates[0]
 	}
 
-	// For other metrics, compute quality/price ratio and sort by it.
-	type ratioed struct {
-		scoredModel
-		ratio float64
-	}
-	ratioedCandidates := make([]ratioed, len(candidates))
-	for i, c := range candidates {
-		r := 0.0
-		if c.price > 0 {
-			r = c.score / c.price
-		}
-		ratioedCandidates[i] = ratioed{scoredModel: c, ratio: r}
-	}
+	// Multi-metric roles also compute Qnorm as an internal comparison value.
+	// It never feeds the ratio below (design Decision 1 & 2).
+	computeNormalized(role, candidates)
 
-	sort.Slice(ratioedCandidates, func(i, j int) bool {
-		if ratioedCandidates[i].ratio != ratioedCandidates[j].ratio {
-			return ratioedCandidates[i].ratio > ratioedCandidates[j].ratio
+	// Quality/price ratio ALWAYS uses the raw weighted sum, never a
+	// normalized value — normalize-then-ratio reorders winners (design
+	// Decision 1).
+	sort.Slice(candidates, func(i, j int) bool {
+		ri, rj := qualityPriceRatio(candidates[i]), qualityPriceRatio(candidates[j])
+		if ri != rj {
+			return ri > rj
 		}
 		// Tiebreak: higher raw score wins.
-		return ratioedCandidates[i].score > ratioedCandidates[j].score
+		return candidates[i].qraw > candidates[j].qraw
 	})
 
-	return &ratioedCandidates[0].scoredModel
+	return &candidates[0]
 }
 
-// collectCandidates builds scored models that match the role's metric and
-// haven't exceeded the maxUses threshold.
-func collectCandidates(models []EnrichedModel, role AgentRole, used map[string]int, maxUses int) []scoredModel {
+// qualityPriceRatio returns Qraw / price for a candidate, or 0 when price
+// is not positive.
+func qualityPriceRatio(c scoredModel) float64 {
+	if c.price <= 0 {
+		return 0
+	}
+	return c.qraw / c.price
+}
+
+// collectCandidates builds scored models for a role that pass the hard
+// constraint pre-filter, in this exact order (weighted-scoring spec, "Hard
+// Constraint Pre-Filter"):
+//  1. skip models with no usable pricing
+//  2. skip models already at maxUses
+//  3. apply min_context, max_input_price, requires, exclude_family_of
+//  4. for weighted roles, skip candidates with a nil value on any
+//     positively-weighted metric
+func collectCandidates(models []EnrichedModel, role profile.Role, used map[string]int, maxUses int, assignedFamily map[string]string) []scoredModel {
 	candidates := make([]scoredModel, 0)
 
 	for _, m := range models {
-		// Skip models already at the usage limit.
+		// (1) Skip models without usable pricing.
+		if m.Pricing == nil || m.Pricing.Prompt == 0 {
+			continue
+		}
+		price := m.Pricing.Prompt * 1_000_000 // per 1M tokens
+
+		// (2) Skip models already at the usage limit.
 		if used[m.OCID] >= maxUses {
 			continue
 		}
 
-		// Skip models without pricing.
-		if m.Pricing == nil || m.Pricing.Prompt == 0 {
+		// (3) Hard constraints — never relaxed.
+		if role.MinContext != nil {
+			if m.ContextLength == nil || *m.ContextLength < *role.MinContext {
+				continue
+			}
+		}
+		if role.MaxInputPrice != nil && price > *role.MaxInputPrice {
+			continue
+		}
+		if !satisfiesRequires(m, role.Requires) {
+			continue
+		}
+		if role.ExcludeFamilyOf != "" {
+			if fam, ok := assignedFamily[role.ExcludeFamilyOf]; ok && deriveProvider(m.OCID) == fam {
+				continue
+			}
+		}
+
+		if len(role.Weights) == 0 {
+			// Price-minimizing objective: qraw holds the intelligence
+			// tiebreak value, 50.0 fallback when null (mirrors today's
+			// "cheapest" behavior exactly).
+			score := 50.0
+			if m.Benchmarks.Intelligence != nil {
+				score = *m.Benchmarks.Intelligence
+			}
+			candidates = append(candidates, scoredModel{model: m, qraw: score, price: price})
 			continue
 		}
 
-		price := m.Pricing.Prompt * 1_000_000 // per 1M tokens
-
-		var score float64
-		switch role.BestMetric {
-		case "intelligence":
-			if m.Benchmarks.Intelligence != nil {
-				score = *m.Benchmarks.Intelligence
-			} else {
+		// (4) Weighted roles: skip candidates missing a positively-weighted metric.
+		qraw := 0.0
+		skip := false
+		for metric, w := range role.Weights {
+			if w <= 0 {
 				continue
 			}
-		case "coding":
-			if m.Benchmarks.Coding != nil {
-				score = *m.Benchmarks.Coding
-			} else {
-				continue
+			v := metricValue(m, metric)
+			if v == nil {
+				skip = true
+				break
 			}
-		case "agentic":
-			if m.Benchmarks.Agentic != nil {
-				score = *m.Benchmarks.Agentic
-			} else {
-				continue
-			}
-		case "cheapest":
-			if m.Benchmarks.Intelligence != nil {
-				score = *m.Benchmarks.Intelligence
-			} else {
-				score = 50.0
-			}
+			qraw += w * (*v)
+		}
+		if skip {
+			continue
 		}
 
-		candidates = append(candidates, scoredModel{
-			model: m,
-			score: score,
-			price: price,
-		})
+		candidates = append(candidates, scoredModel{model: m, qraw: qraw, price: price})
 	}
 
 	return candidates
 }
 
+// satisfiesRequires checks that a candidate model satisfies every
+// capability token in requires. Only "reasoning" is currently implemented
+// (matched against model.Reasoning != nil); any other token currently fails
+// the constraint rather than being silently ignored, since the token set is
+// expected to grow (role-profiles spec, "Capability Token Support").
+func satisfiesRequires(m EnrichedModel, requires []string) bool {
+	for _, token := range requires {
+		switch token {
+		case "reasoning":
+			if m.Reasoning == nil {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// metricValue returns the raw benchmark value for a metric key, or nil if
+// the metric is unknown or the model has no value for it.
+func metricValue(m EnrichedModel, metric string) *float64 {
+	switch metric {
+	case profile.MetricIntelligence:
+		return m.Benchmarks.Intelligence
+	case profile.MetricCoding:
+		return m.Benchmarks.Coding
+	case profile.MetricAgentic:
+		return m.Benchmarks.Agentic
+	default:
+		return nil
+	}
+}
+
+// computeNormalized fills in candidates[i].qnorm with the min-max
+// normalized weighted sum, but only when the role weights two or more
+// metrics positively. Normalization is computed per metric over the given
+// (already constraint-filtered) candidate set; when the range for a metric
+// is zero (including a single-candidate set), norm is 1.0 for all
+// candidates on that metric — never a division by zero (weighted-scoring
+// spec, "Multi-Metric Normalization").
+func computeNormalized(role profile.Role, candidates []scoredModel) {
+	positiveMetrics := make([]string, 0, len(role.Weights))
+	for metric, w := range role.Weights {
+		if w > 0 {
+			positiveMetrics = append(positiveMetrics, metric)
+		}
+	}
+	if len(positiveMetrics) < 2 {
+		return
+	}
+
+	for _, metric := range positiveMetrics {
+		weight := role.Weights[metric]
+		min, max := math.Inf(1), math.Inf(-1)
+		values := make([]float64, len(candidates))
+		for i, c := range candidates {
+			v := metricValue(c.model, metric)
+			if v == nil {
+				// collectCandidates step 4 already excludes candidates
+				// missing a positively-weighted metric; this is defensive.
+				continue
+			}
+			values[i] = *v
+			if *v < min {
+				min = *v
+			}
+			if *v > max {
+				max = *v
+			}
+		}
+
+		rangeV := max - min
+		for i, val := range values {
+			norm := 1.0
+			if rangeV != 0 {
+				norm = (val - min) / rangeV
+			}
+			candidates[i].qnorm += weight * norm
+		}
+	}
+}
+
+// dominantMetric returns the metric key with the highest positive weight,
+// breaking ties by a fixed precedence order (intelligence, coding, agentic)
+// for determinism.
+func dominantMetric(weights map[string]float64) string {
+	order := []string{profile.MetricIntelligence, profile.MetricCoding, profile.MetricAgentic}
+	best := ""
+	bestWeight := math.Inf(-1)
+	for _, metric := range order {
+		w, ok := weights[metric]
+		if !ok {
+			continue
+		}
+		if w > bestWeight {
+			bestWeight = w
+			best = metric
+		}
+	}
+	return best
+}
+
 // buildReason generates a human-readable reason for the recommendation.
-func buildReason(role AgentRole, best *scoredModel) string {
+func buildReason(role profile.Role, best *scoredModel) string {
 	m := best.model
 	price := 0.0
 	if m.Pricing != nil {
@@ -285,24 +398,16 @@ func buildReason(role AgentRole, best *scoredModel) string {
 	}
 
 	var metric string
-	switch role.BestMetric {
-	case "intelligence":
-		if m.Benchmarks.Intelligence != nil {
-			metric = fmt.Sprintf("%.1f intelligence", *m.Benchmarks.Intelligence)
-		}
-	case "coding":
-		if m.Benchmarks.Coding != nil {
-			metric = fmt.Sprintf("%.1f coding", *m.Benchmarks.Coding)
-		}
-	case "agentic":
-		if m.Benchmarks.Agentic != nil {
-			metric = fmt.Sprintf("%.1f agentic", *m.Benchmarks.Agentic)
-		}
-	case "cheapest":
+	if len(role.Weights) == 0 {
+		// Price-minimizing objective (mirrors today's "cheapest" text exactly).
 		if m.Benchmarks.Intelligence != nil {
 			metric = fmt.Sprintf("intelligence %.1f", *m.Benchmarks.Intelligence)
 		} else {
 			metric = "sin benchmarks"
+		}
+	} else if dom := dominantMetric(role.Weights); dom != "" {
+		if v := metricValue(m, dom); v != nil {
+			metric = fmt.Sprintf("%.1f %s", *v, dom)
 		}
 	}
 
@@ -321,7 +426,7 @@ func buildReason(role AgentRole, best *scoredModel) string {
 		subInfo = " (Zen)"
 	}
 
-	return fmt.Sprintf("Mejor relación calidad/precio: %s, $%.3f/M input%s%s — %s", metric, price, ctxInfo, subInfo, role.Criteria)
+	return fmt.Sprintf("Mejor relación calidad/precio: %s, $%.3f/M input%s%s — %s", metric, price, ctxInfo, subInfo, role.Description)
 }
 
 // FormatRecommendations returns a formatted text block for MCP output.

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/R0LM0/somm/internal/profile"
 )
 
 // TokenUsage describes estimated tokens per session for an agent type.
@@ -51,7 +53,7 @@ func defaultTokenUsage(agentID string) TokenUsage {
 
 // EstimateCost computes monthly cost estimates for agent roles.
 // hoursPerDay is daily usage, roles filters which agents to include.
-func EstimateCost(ctx context.Context, client *Client, hoursPerDay float64, roles []string) (*CostResult, error) {
+func EstimateCost(ctx context.Context, client *Client, prof *profile.Profile, hoursPerDay float64, roles []string) (*CostResult, error) {
 	if hoursPerDay <= 0 {
 		hoursPerDay = 8
 	}
@@ -60,7 +62,7 @@ func EstimateCost(ctx context.Context, client *Client, hoursPerDay float64, role
 	// Each session assumed to last ~1 hour of active interaction.
 	sessionsPerMonth := int(hoursPerDay * 22)
 
-	_, recs, err := RecommendConfig(ctx, client, roles)
+	_, recs, err := RecommendConfig(ctx, client, prof, roles)
 	if err != nil {
 		return nil, fmt.Errorf("getting recommendations: %w", err)
 	}
