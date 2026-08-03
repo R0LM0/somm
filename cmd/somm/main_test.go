@@ -59,9 +59,6 @@ func TestServerInitialize(t *testing.T) {
 	if _, err := stdin.Write([]byte(initReq)); err != nil {
 		t.Fatalf("write initialize request: %v", err)
 	}
-	if err := stdin.Close(); err != nil {
-		t.Fatalf("close stdin: %v", err)
-	}
 
 	done := make(chan struct{})
 	var resp bytes.Buffer
