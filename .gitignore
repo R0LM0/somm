@@ -32,3 +32,6 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Local agent tooling (not for the public repo)
+.atl/
