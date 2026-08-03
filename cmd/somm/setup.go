@@ -199,6 +199,14 @@ func runConfigurationFlow(binaryPath, envPath string, config *openCodeConfig, co
 				Value(&binaryPath).Run()
 		}
 	}
+
+	// Ensure binary is in the correct location ($GOPATH/bin)
+	binaryPath, err := ensureBinaryInCorrectLocation(binaryPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Error moviendo binario: %v\n", err)
+		fmt.Println("Podés moverlo manualmente a $GOPATH/bin/somm.exe")
+	}
+
 	envPath = filepath.Join(filepath.Dir(binaryPath), ".env")
 
 	selected, err := providersSelected()
@@ -396,6 +404,79 @@ func findBinary() (string, error) {
 	}
 
 	return "", fmt.Errorf("binario no encontrado en %s", filepath.Join(gopath, "bin"))
+}
+
+// ensureBinaryInCorrectLocation checks if the binary is in $GOPATH/bin and
+// copies it there if not. Returns the final path to use.
+func ensureBinaryInCorrectLocation(currentPath string) (string, error) {
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		home, _ := os.UserHomeDir()
+		gopath = filepath.Join(home, "go")
+	}
+
+	binName := "somm"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+
+	targetDir := filepath.Join(gopath, "bin")
+	targetPath := filepath.Join(targetDir, binName)
+
+	// If already in correct location, return as-is
+	if currentPath == targetPath {
+		return targetPath, nil
+	}
+
+	// Check if target already exists
+	if _, err := os.Stat(targetPath); err == nil {
+		// Target exists, ask user if they want to replace
+		var replace bool
+		huh.NewConfirm().
+			Title(fmt.Sprintf("Ya existe un somm en %s. ¿Reemplazar?", targetDir)).
+			Affirmative("Sí, reemplazar").
+			Negative("No, mantener el actual").
+			Value(&replace).Run()
+
+		if !replace {
+			return currentPath, nil
+		}
+	}
+
+	// Create target directory if needed
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return currentPath, fmt.Errorf("creando directorio: %w", err)
+	}
+
+	// Read source binary
+	sourceData, err := os.ReadFile(currentPath)
+	if err != nil {
+		return currentPath, fmt.Errorf("leyendo binario: %w", err)
+	}
+
+	// Write to target
+	if err := os.WriteFile(targetPath, sourceData, 0755); err != nil {
+		return currentPath, fmt.Errorf("escribiendo binario: %w", err)
+	}
+
+	fmt.Printf("✅ Binario instalado en: %s\n", targetPath)
+
+	// If source was in a temp/downloads folder, offer to clean up
+	if strings.Contains(currentPath, "Downloads") || strings.Contains(currentPath, "Temp") {
+		var cleanup bool
+		huh.NewConfirm().
+			Title("¿Eliminar el binario de la carpeta de descargas?").
+			Affirmative("Sí, eliminar").
+			Negative("No, mantener").
+			Value(&cleanup).Run()
+
+		if cleanup {
+			os.Remove(currentPath)
+			fmt.Println("✅ Binario original eliminado")
+		}
+	}
+
+	return targetPath, nil
 }
 
 func createPowerShellAlias() error {
