@@ -1,0 +1,101 @@
+Tu configuración actual:
+✅ OpenCode Go (API key configurada)
+✅ OpenRouter (API key configurada)
+
+Recomendación por agente (ordenada por prioridad):
+
+sdd-apply → Kimi K2.6
+  Calidad: 60.3 intelligence, 72.0 coding, 68.5 agentic | Precio: $0.950/M input
+  Provider: Kimi
+  Por qué: Mejor relación calidad/precio: 72.0 coding, $0.950/M input, 256K ctx (Go + Zen) — máxima capacidad de coding
+
+review-risk → Qwen .7 Max
+  Calidad: 65.4 intelligence, 60.1 coding, 62.7 agentic | Precio: $2.000/M input
+  Provider: Qwen
+  Por qué: Mejor relación calidad/precio: 65.4 intelligence, $2.000/M input, 128K ctx (Go + Zen) — conocimiento seguridad + evidencia concreta
+
+jd-judge-b → Kimi K2.6
+  Calidad: 60.3 intelligence, 72.0 coding, 68.5 agentic | Precio: $0.950/M input
+  Provider: Kimi
+  Por qué: Mejor relación calidad/precio: 60.3 intelligence, $0.950/M input, 256K ctx (Go + Zen) — razonamiento adversarial máximo
+
+sdd-verify → Kimi K2.6
+  Calidad: 60.3 intelligence, 72.0 coding, 68.5 agentic | Precio: $0.950/M input
+  Provider: Kimi
+  Por qué: Mejor relación calidad/precio: 60.3 intelligence, $0.950/M input, 256K ctx (Go + Zen) — máximo razonamiento + different from apply
+
+sdd-propose → DeepSeek V4 Pro
+  Calidad: 72.5 intelligence, 68.4 coding, 65.0 agentic | Precio: $0.435/M input
+  Provider: DeepSeek
+  Por qué: Mejor relación calidad/precio: 72.5 intelligence, $0.435/M input, 1000K ctx (Go + Zen) — máximo razonamiento arquitectónico
+
+jd-judge-a → Google 3 Flash
+  Calidad: 55.0 intelligence, 50.5 coding, 58.2 agentic | Precio: $0.500/M input
+  Provider: Google
+  Por qué: Mejor relación calidad/precio: 55.0 intelligence, $0.500/M input, 1000K ctx (Go + Zen) — razonamiento adversarial máximo
+
+orchestrator → DeepSeek V4 Flash
+  Calidad: 52.1 intelligence, 48.0 coding, 50.0 agentic | Precio: $0.100/M input
+  Provider: DeepSeek
+  Por qué: Mejor relación calidad/precio: 52.1 intelligence, $0.100/M input, 1000K ctx (Go + Zen) — instruction following + contexto largo
+
+review-reliability → OpenAI 5.5 Pro
+  Calidad: 80.2 intelligence, 75.0 coding, 70.0 agentic | Precio: $30.000/M input
+  Provider: OpenAI
+  Por qué: Mejor relación calidad/precio: 80.2 intelligence, $30.000/M input, 1000K ctx (Go + Zen) — behavior-first + edge cases
+
+sdd-explore → DeepSeek V4 Pro
+  Calidad: 72.5 intelligence, 68.4 coding, 65.0 agentic | Precio: $0.435/M input
+  Provider: DeepSeek
+  Por qué: Mejor relación calidad/precio: 65.0 agentic, $0.435/M input, 1000K ctx (Go + Zen) — análisis multi-paso + razonamiento sobre código
+
+review-resilience → DeepSeek V4 Flash
+  Calidad: 52.1 intelligence, 48.0 coding, 50.0 agentic | Precio: $0.100/M input
+  Provider: DeepSeek
+  Por qué: Mejor relación calidad/precio: 52.1 intelligence, $0.100/M input, 1000K ctx (Go + Zen) — patrones de fallo + SRE mindset
+
+review-refuter → DeepSeek V4 Pro
+  Calidad: 72.5 intelligence, 68.4 coding, 65.0 agentic | Precio: $0.435/M input
+  Provider: DeepSeek
+  Por qué: Mejor relación calidad/precio: 72.5 intelligence, $0.435/M input, 1000K ctx (Go + Zen) — rigor lógico + independencia
+
+sdd-spec → Google 3 Flash
+  Calidad: 55.0 intelligence, 50.5 coding, 58.2 agentic | Precio: $0.500/M input
+  Provider: Google
+  Por qué: Mejor relación calidad/precio: 55.0 intelligence, $0.500/M input, 1000K ctx (Go + Zen) — escritura técnica + output estructurado
+
+jd-fix-agent → Qwen .7 Max
+  Calidad: 65.4 intelligence, 60.1 coding, 62.7 agentic | Precio: $2.000/M input
+  Provider: Qwen
+  Por qué: Mejor relación calidad/precio: 60.1 coding, $2.000/M input, 128K ctx (Go + Zen) — instruction following preciso + coding
+
+sdd-init → GLM 5 Air
+  Precio: $0.080/M input (sin benchmarks)
+  Provider: GLM
+  Por qué: Mejor relación calidad/precio: sin benchmarks, $0.080/M input, 64K ctx (Go + Zen) — contexto masivo + bajo costo
+
+review-readability → OpenAI 5.5 Pro
+  Calidad: 80.2 intelligence, 75.0 coding, 70.0 agentic | Precio: $30.000/M input
+  Provider: OpenAI
+  Por qué: Mejor relación calidad/precio: 80.2 intelligence, $30.000/M input, 1000K ctx (Go + Zen) — juicio de estructura + mantenibilidad
+
+sdd-design → Google 3 Flash
+  Calidad: 55.0 intelligence, 50.5 coding, 58.2 agentic | Precio: $0.500/M input
+  Provider: Google
+  Por qué: Mejor relación calidad/precio: 55.0 intelligence, $0.500/M input, 1000K ctx (Go + Zen) — especialización visual/multimodal
+
+sdd-onboard → DeepSeek V4 Flash
+  Calidad: 52.1 intelligence, 48.0 coding, 50.0 agentic | Precio: $0.100/M input
+  Provider: DeepSeek
+  Por qué: Mejor relación calidad/precio: 52.1 intelligence, $0.100/M input, 1000K ctx (Go + Zen) — contexto largo + razonamiento moderado
+
+sdd-archive → Qwen .7 Max
+  Calidad: 65.4 intelligence, 60.1 coding, 62.7 agentic | Precio: $2.000/M input
+  Provider: Qwen
+  Por qué: Mejor relación calidad/precio: intelligence 65.4, $2.000/M input, 128K ctx (Go + Zen) — costo mínimo absoluto
+
+sdd-tasks → GLM 5 Air
+  Precio: $0.080/M input (sin benchmarks)
+  Provider: GLM
+  Por qué: Mejor relación calidad/precio: sin benchmarks, $0.080/M input, 64K ctx (Go + Zen) — velocidad + formato + costo mínimo
+

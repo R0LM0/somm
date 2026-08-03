@@ -1,0 +1,9 @@
+{"data":[
+  {"id":"deepseek-v4-pro","object":"model","created":1,"owned_by":"test"},
+  {"id":"deepseek-v4-flash","object":"model","created":2,"owned_by":"test"},
+  {"id":"kimi-k2.6","object":"model","created":3,"owned_by":"test"},
+  {"id":"gpt-5.5-pro","object":"model","created":4,"owned_by":"test"},
+  {"id":"gemini-3-flash","object":"model","created":5,"owned_by":"test"},
+  {"id":"qwen3.7-max","object":"model","created":6,"owned_by":"test"},
+  {"id":"glm-5-air","object":"model","created":7,"owned_by":"test"}
+]}
