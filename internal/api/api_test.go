@@ -35,18 +35,17 @@ func (t *urlRewriteTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	return t.inner.RoundTrip(req)
 }
 
-func newClientWithServer(server *httptest.Server, ocKey, orKey, kimiKey string) *Client {
+func newClientWithServer(server *httptest.Server, ocKey, orKey string) *Client {
 	return &Client{
 		HTTPClient: rewriteTransport(server),
 		OCAPIKey:   ocKey,
 		ORAPIKey:   orKey,
-		KIMAPIKey:  kimiKey,
 	}
 }
 
 func TestNewClient(t *testing.T) {
 	custom := &http.Client{Timeout: 0}
-	c := NewClient(custom, "oc-key", "or-key", "kimi-key")
+	c := NewClient(custom, "oc-key", "or-key")
 	if c == nil {
 		t.Fatal("NewClient returned nil")
 	}
@@ -59,16 +58,10 @@ func TestNewClient(t *testing.T) {
 	if c.ORAPIKey != "or-key" {
 		t.Errorf("ORAPIKey = %q, want or-key", c.ORAPIKey)
 	}
-	if c.KIMAPIKey != "kimi-key" {
-		t.Errorf("KIMAPIKey = %q, want kimi-key", c.KIMAPIKey)
-	}
 
-	cNil := NewClient(nil, "oc-key", "or-key", "")
+	cNil := NewClient(nil, "oc-key", "or-key")
 	if cNil.HTTPClient != nil {
 		t.Error("NewClient(nil, ...) should keep nil HTTPClient (default resolved at request time)")
-	}
-	if cNil.KIMAPIKey != "" {
-		t.Errorf("KIMAPIKey = %q, want empty", cNil.KIMAPIKey)
 	}
 }
 
@@ -425,7 +418,7 @@ func TestListModels(t *testing.T) {
 			srv := httptest.NewServer(baseHandler(tt.goStatus, tt.zenStatus, tt.orStatus, tt.orBody))
 			defer srv.Close()
 
-			client := newClientWithServer(srv, tt.ocKey, "or-key", "")
+			client := newClientWithServer(srv, tt.ocKey, "or-key")
 			models, err := client.ListModels(context.Background(), tt.sub, tt.enrich)
 			if tt.wantErrMsg != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErrMsg) {
@@ -537,7 +530,7 @@ func TestListORModels(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			client := newClientWithServer(srv, "oc-key", "or-key", "")
+			client := newClientWithServer(srv, "oc-key", "or-key")
 			models, err := client.ListORModels(context.Background(), tt.filter)
 			if tt.wantErrMsg != "" {
 				if err == nil || !strings.Contains(err.Error(), tt.wantErrMsg) {

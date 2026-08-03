@@ -111,7 +111,7 @@ func TestServerRequiresOpenCodeKey(t *testing.T) {
 	cmd := exec.Command(binary, "--skip-setup")
 	cmd.Dir = t.TempDir() // Run in temp dir without .env
 	cmd.Stderr = &stderr
-	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=", "OPENROUTER_API_KEY=", "KIMI_API_KEY=")
+	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=", "OPENROUTER_API_KEY=")
 
 	err = cmd.Run()
 	if err == nil {

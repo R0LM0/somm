@@ -38,7 +38,6 @@ func TestE2E_NoArgsNoEnv_ShowsError(t *testing.T) {
 	cmd.Env = append(os.Environ(),
 		"OPENCODE_API_KEY=",
 		"OPENROUTER_API_KEY=",
-		"KIMI_API_KEY=",
 	)
 
 	var stderr strings.Builder
@@ -248,7 +247,7 @@ func TestE2E_SkipSetup_WithNoKey_ShowsError(t *testing.T) {
 	cmd := exec.Command(binary, "--skip-setup")
 	cmd.Dir = t.TempDir()
 	cmd.Stderr = &stderr
-	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=", "OPENROUTER_API_KEY=", "KIMI_API_KEY=")
+	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=", "OPENROUTER_API_KEY=")
 
 	err = cmd.Run()
 	if err == nil {

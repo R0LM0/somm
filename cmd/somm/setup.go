@@ -157,8 +157,6 @@ func keyNameForProvider(provider string) string {
 		return "OPENCODE_API_KEY"
 	case "OpenRouter":
 		return "OPENROUTER_API_KEY"
-	case "Kimi":
-		return "KIMI_API_KEY"
 	default:
 		return ""
 	}
@@ -166,7 +164,7 @@ func keyNameForProvider(provider string) string {
 
 func saveEnvFile(envPath string, keys map[string]string) error {
 	var envContent strings.Builder
-	order := []string{"OPENCODE_API_KEY", "OPENROUTER_API_KEY", "KIMI_API_KEY"}
+	order := []string{"OPENCODE_API_KEY", "OPENROUTER_API_KEY"}
 	for _, key := range order {
 		if value, ok := keys[key]; ok && value != "" {
 			envContent.WriteString(fmt.Sprintf("%s=%s\n", key, value))

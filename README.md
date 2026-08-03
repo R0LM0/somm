@@ -13,7 +13,8 @@ agent host you use.
 
 ## Features
 
-- **Auto-setup wizard** — detects missing API keys and guides you through configuration
+- **Interactive setup wizard** — a console TUI that detects missing API keys and guides you through configuration
+- **Console quality/price chart** — `somm chart` prints a Pareto-frontier view of every OpenRouter model (any provider, not just OpenCode Go/Zen) ranked by price, marking the ones with the best quality for their price
 - List available models from OpenCode Go/Zen subscriptions
 - Cross-reference with OpenRouter benchmarks and pricing
 - Read agent selection criteria from the Gentle AI guide
@@ -25,14 +26,14 @@ agent host you use.
 - **Export safe config to opencode.json** (only the `model` field)
 - Automatic `.env` configuration loading
 - HTTP timeout, retry, and graceful degradation
-- **Multi-provider support** — OpenCode, OpenRouter, and Kimi
+- **Multi-provider support** — OpenCode and OpenRouter
 
 ## Installation
 
 ### Using Go
 
 ```bash
-go install github.com/R0LM0/somm/cmd/somm@latest
+go install github.com/R0LM0/somm/v2/cmd/somm@latest
 ```
 
 ### From Release
@@ -59,7 +60,7 @@ somm
 
 The wizard will:
 1. Check if you already have API keys configured
-2. Ask which providers you want to use (OpenCode required, OpenRouter and Kimi optional)
+2. Ask which providers you want to use (OpenCode required, OpenRouter optional)
 3. Guide you through pasting each API key
 4. Save the `.env` file and update `opencode.json`
 5. Start the server automatically
@@ -74,7 +75,6 @@ If you prefer manual configuration, see the options below.
 |----------|----------|-------------|
 | `OPENCODE_API_KEY` | Yes | OpenCode Go/Zen subscription key |
 | `OPENROUTER_API_KEY` | No | OpenRouter API key for benchmarks |
-| `KIMI_API_KEY` | No | Kimi API key (optional provider) |
 | `SOMM_PROFILE` | No | Path to a role profile YAML file (see [Role profiles](#role-profiles)) |
 
 ### .env file
@@ -84,7 +84,6 @@ Create a `.env` file next to the binary:
 ```
 OPENCODE_API_KEY=sk-your-key-here
 OPENROUTER_API_KEY=sk-or-your-key-here
-KIMI_API_KEY=your-kimi-key-here
 ```
 
 ### Flags
@@ -160,6 +159,19 @@ To reconfigure an existing installation:
 
 ```bash
 somm setup --force
+```
+
+### Console quality/price chart
+
+`somm chart` prints a ranked, ★-marked Pareto-frontier view of the full
+OpenRouter catalog — no `OPENCODE_API_KEY` required, since OpenRouter's model
+list is public:
+
+```bash
+somm chart                              # Pareto-optimal models by intelligence/price
+somm chart --metric coding              # rank by coding score instead
+somm chart --provider anthropic         # filter by provider or model name
+somm chart --all --top 50               # list every priced model, not just the frontier
 ```
 
 ### With OpenCode (manual)
@@ -263,16 +275,20 @@ make all           # Full pipeline (fmt, tidy, lint, test, build)
 ### Project structure
 
 ```
-cmd/somm/          # MCP server entry point (serve + setup wizard)
-internal/api/      # HTTP client, models, matching
+cmd/somm/          # MCP server entry point (serve, setup wizard TUI, chart)
+internal/api/      # HTTP client, models, matching, recommendations
 internal/guide/    # Embedded guide extraction
+internal/profile/  # Role profile schema, presets, resolution
 ```
 
 ### Release
 
+Pushing a `v*` tag triggers GoReleaser via GitHub Actions, which builds and
+publishes cross-platform binaries automatically:
+
 ```bash
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.3.1
+git push origin v2.3.1
 ```
 
 ## License

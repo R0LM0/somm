@@ -160,7 +160,6 @@ func TestSaveEnvFile(t *testing.T) {
 	keys := map[string]string{
 		"OPENCODE_API_KEY":   "oc-secret",
 		"OPENROUTER_API_KEY": "or-secret",
-		"KIMI_API_KEY":       "kimi-secret",
 	}
 	if err := saveEnvFile(envPath, keys); err != nil {
 		t.Fatalf("saveEnvFile error: %v", err)
@@ -174,7 +173,7 @@ func TestSaveEnvFile(t *testing.T) {
 	if content == "" {
 		t.Fatal("expected non-empty .env content")
 	}
-	for _, want := range []string{"OPENCODE_API_KEY=oc-secret", "OPENROUTER_API_KEY=or-secret", "KIMI_API_KEY=kimi-secret"} {
+	for _, want := range []string{"OPENCODE_API_KEY=oc-secret", "OPENROUTER_API_KEY=or-secret"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("expected .env to contain %q, got %q", want, content)
 		}
@@ -276,7 +275,6 @@ func TestKeyNameForProvider(t *testing.T) {
 	}{
 		{"OpenCode", "OPENCODE_API_KEY"},
 		{"OpenRouter", "OPENROUTER_API_KEY"},
-		{"Kimi", "KIMI_API_KEY"},
 		{"Unknown", ""},
 	}
 	for _, tt := range tests {
@@ -377,28 +375,3 @@ func TestForceFlagParsing(t *testing.T) {
 	}
 }
 
-// Scenario 16: .env Kimi key reaches API client
-func TestKimiKeyInEnv(t *testing.T) {
-	tmp := t.TempDir()
-	envPath := filepath.Join(tmp, ".env")
-
-	// Create .env with Kimi key
-	envContent := "OPENCODE_API_KEY=oc-secret\nKIMI_API_KEY=kimi-secret\n"
-	if err := os.WriteFile(envPath, []byte(envContent), 0600); err != nil {
-		t.Fatalf("writing .env: %v", err)
-	}
-
-	// Read and verify
-	data, err := os.ReadFile(envPath)
-	if err != nil {
-		t.Fatalf("reading .env: %v", err)
-	}
-	content := string(data)
-
-	if !strings.Contains(content, "KIMI_API_KEY=kimi-secret") {
-		t.Errorf(".env missing KIMI_API_KEY, got: %s", content)
-	}
-	if !strings.Contains(content, "OPENCODE_API_KEY=oc-secret") {
-		t.Errorf(".env missing OPENCODE_API_KEY, got: %s", content)
-	}
-}

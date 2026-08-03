@@ -39,7 +39,6 @@ func ValidateConfig(ctx context.Context, client *Client, prof *profile.Profile) 
 	// 1. Check provider status.
 	ocConfigured := client.OCAPIKey != ""
 	orConfigured := client.ORAPIKey != ""
-	kimiConfigured := client.KIMAPIKey != ""
 
 	result.Providers = append(result.Providers, ProviderStatusDetail{
 		Name:       "OpenCode Go",
@@ -48,10 +47,6 @@ func ValidateConfig(ctx context.Context, client *Client, prof *profile.Profile) 
 	result.Providers = append(result.Providers, ProviderStatusDetail{
 		Name:       "OpenRouter",
 		Configured: orConfigured,
-	})
-	result.Providers = append(result.Providers, ProviderStatusDetail{
-		Name:       "Kimi",
-		Configured: kimiConfigured,
 	})
 
 	// 2. Fetch models if OpenCode is configured.
@@ -225,28 +220,6 @@ func generateImprovements(providers []ProviderStatusDetail, models []EnrichedMod
 		if r.Criticidad == "CRÍTICO" && r.Model == "" {
 			improvements = append(improvements,
 				fmt.Sprintf("Rol %s sin modelo asignado — verificar configuración de API keys", r.Agent))
-		}
-	}
-
-	// Suggest specific providers based on agent needs.
-	needsCoding := false
-	for _, r := range recs {
-		if r.Coding != nil && *r.Coding > 0 {
-			needsCoding = true
-			break
-		}
-	}
-	if needsCoding {
-		hasKimi := false
-		for _, m := range models {
-			if strings.Contains(strings.ToLower(m.OCID), "kimi") {
-				hasKimi = true
-				break
-			}
-		}
-		if !hasKimi {
-			improvements = append(improvements,
-				"Agregar KIMI_API_KEY para mejorar capacidades de coding")
 		}
 	}
 

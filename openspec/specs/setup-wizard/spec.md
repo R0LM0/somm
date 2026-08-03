@@ -23,14 +23,13 @@ When not in status mode, the wizard MUST ask the user which providers they have 
 
 - OpenCode Go/Zen (required and pre-selected)
 - OpenRouter (optional)
-- Kimi (optional)
 
 The user MUST NOT be able to deselect OpenCode.
 
 #### Scenario: User selects all providers
 
 - GIVEN the wizard is not in status mode
-- WHEN the user selects OpenCode, OpenRouter, and Kimi
+- WHEN the user selects OpenCode and OpenRouter
 - THEN the system MUST prompt for an API key for each selected provider
 
 #### Scenario: OpenCode is required
@@ -41,7 +40,7 @@ The user MUST NOT be able to deselect OpenCode.
 
 ### Requirement: Key Prompts
 
-For each selected provider, the wizard MUST prompt for the API key. The OpenCode key MUST be non-empty. OpenRouter and Kimi keys MAY be empty if the user leaves them blank.
+For each selected provider, the wizard MUST prompt for the API key. The OpenCode key MUST be non-empty. The OpenRouter key MAY be empty if the user leaves it blank.
 
 #### Scenario: Required OpenCode key rejected if empty
 

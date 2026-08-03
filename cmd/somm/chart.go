@@ -35,7 +35,7 @@ func runChart(argv []string) {
 
 	// OpenRouter's model list is public; auth is only sent when a key is
 	// set, so this works even without OPENCODE_API_KEY configured.
-	client := api.NewClient(nil, "", os.Getenv("OPENROUTER_API_KEY"), "")
+	client := api.NewClient(nil, "", os.Getenv("OPENROUTER_API_KEY"))
 	models, err := client.ListORModels(context.Background(), *filter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "❌ Error consultando OpenRouter: %v\n", err)

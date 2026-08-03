@@ -62,17 +62,14 @@ func TestValidateConfig_WithMockModels(t *testing.T) {
 	}
 
 	// Verify providers.
-	if len(result.Providers) != 3 {
-		t.Fatalf("expected 3 providers, got %d", len(result.Providers))
+	if len(result.Providers) != 2 {
+		t.Fatalf("expected 2 providers, got %d", len(result.Providers))
 	}
 	if !result.Providers[0].Configured {
 		t.Error("OpenCode Go should be configured")
 	}
 	if !result.Providers[1].Configured {
 		t.Error("OpenRouter should be configured")
-	}
-	if result.Providers[2].Configured {
-		t.Error("Kimi should not be configured")
 	}
 
 	// Verify agent checks.
@@ -124,52 +121,6 @@ func TestValidateConfig_NoOpenRouter(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected improvement for missing OPENROUTER_API_KEY, got: %v", result.Improvements)
-	}
-}
-
-func TestValidateConfig_KimiConfigured(t *testing.T) {
-	goBody := `{"data":[{"id":"deepseek-v4-pro","object":"model","created":1,"owned_by":"test"}]}`
-	zenBody := goBody
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/zen/go/v1/models":
-			w.Write([]byte(goBody))
-		case "/zen/v1/models":
-			w.Write([]byte(zenBody))
-		case "/api/v1/models":
-			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("error"))
-		}
-	}))
-	defer srv.Close()
-
-	client := &Client{
-		HTTPClient: rewriteTransport(srv),
-		OCAPIKey:   "test-key",
-		ORAPIKey:   "",
-		KIMAPIKey:  "test-kimi",
-	}
-
-	result, err := ValidateConfig(context.Background(), client, mustPreset(t))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	var kimi ProviderStatusDetail
-	found := false
-	for _, p := range result.Providers {
-		if p.Name == "Kimi" {
-			kimi = p
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("Kimi provider not found in %v", result.Providers)
-	}
-	if !kimi.Configured {
-		t.Error("Kimi should be configured when KIMAPIKey is set")
 	}
 }
 

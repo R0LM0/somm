@@ -79,14 +79,12 @@ func printUsage() {
 	fmt.Println("Flags:")
 	fmt.Println("  -opencode-api-key string      OpenCode API key (required)")
 	fmt.Println("  -openrouter-api-key string    OpenRouter API key (optional)")
-	fmt.Println("  -kimi-api-key string          Kimi API key (optional)")
 	fmt.Println("  -profile string               Path to role profile YAML file")
 	fmt.Println("  --skip-setup                  Skip auto-setup (for CI/scripts)")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
 	fmt.Println("  OPENCODE_API_KEY              OpenCode Go/Zen subscription key (required)")
 	fmt.Println("  OPENROUTER_API_KEY            OpenRouter API key (optional)")
-	fmt.Println("  KIMI_API_KEY                  Kimi API key (optional)")
 	fmt.Println("  SOMM_PROFILE                  Path to role profile YAML file")
 	fmt.Println()
 	fmt.Println("Examples:")
@@ -200,14 +198,12 @@ func run() error {
 	var (
 		ocKey       string
 		orKey       string
-		kimiKey     string
 		profilePath string
 	)
 	// NOTE: API keys passed via CLI flags are visible in process listings (ps aux).
 	// Prefer setting them via environment variables or .env file instead.
 	flag.StringVar(&ocKey, "opencode-api-key", os.Getenv("OPENCODE_API_KEY"), "OpenCode API key (required)")
 	flag.StringVar(&orKey, "openrouter-api-key", os.Getenv("OPENROUTER_API_KEY"), "OpenRouter API key (optional)")
-	flag.StringVar(&kimiKey, "kimi-api-key", os.Getenv("KIMI_API_KEY"), "Kimi API key (optional)")
 	flag.StringVar(&profilePath, "profile", "", "Path to a role profile YAML file (falls back to SOMM_PROFILE env, ./somm.yaml, XDG config, then the embedded gentle-ai preset)")
 	flag.Parse()
 
@@ -224,7 +220,7 @@ func run() error {
 		return fmt.Errorf("resolving profile: %w", err)
 	}
 
-	client := api.NewClient(nil, ocKey, orKey, kimiKey)
+	client := api.NewClient(nil, ocKey, orKey)
 
 	server := mcp.NewServer(&mcp.Implementation{
 		Name:    "somm",
