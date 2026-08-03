@@ -15,6 +15,7 @@ import (
 
 	"github.com/R0LM0/somm/internal/api"
 	"github.com/R0LM0/somm/internal/guide"
+	"github.com/R0LM0/somm/internal/profile"
 	"github.com/joho/godotenv"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -54,17 +55,28 @@ func run() error {
 	_ = godotenv.Load()
 
 	var (
-		ocKey string
-		orKey string
+		ocKey       string
+		orKey       string
+		profilePath string
 	)
 	// NOTE: API keys passed via CLI flags are visible in process listings (ps aux).
 	// Prefer setting them via environment variables or .env file instead.
 	flag.StringVar(&ocKey, "opencode-api-key", os.Getenv("OPENCODE_API_KEY"), "OpenCode API key (required)")
 	flag.StringVar(&orKey, "openrouter-api-key", os.Getenv("OPENROUTER_API_KEY"), "OpenRouter API key (optional)")
+	flag.StringVar(&profilePath, "profile", "", "Path to a role profile YAML file (falls back to SOMM_PROFILE env, ./somm.yaml, XDG config, then the embedded gentle-ai preset)")
 	flag.Parse()
 
 	if strings.TrimSpace(ocKey) == "" {
 		return errors.New("-opencode-api-key is required")
+	}
+
+	// Resolve the active role profile. A file selected by the resolution
+	// order that is malformed or fails validation is a fatal error — no
+	// silent fallback to the embedded default (role-profiles "Fail-Loud
+	// Validation").
+	prof, err := profile.Resolve(profilePath)
+	if err != nil {
+		return fmt.Errorf("resolving profile: %w", err)
 	}
 
 	client := api.NewClient(nil, ocKey, orKey)
@@ -83,13 +95,13 @@ func run() error {
 	})
 
 	registerListModels(server, client)
-	registerGetAgentCriteria(server)
+	registerGetAgentCriteria(server, prof)
 	registerGetModelBenchmarks(server, client)
 	registerCompareModels(server, client)
-	registerRecommendConfig(server, client)
-	registerValidateConfig(server, client)
-	registerExportConfig(server, client)
-	registerEstimateCost(server, client)
+	registerRecommendConfig(server, client, prof)
+	registerValidateConfig(server, client, prof)
+	registerExportConfig(server, client, prof)
+	registerEstimateCost(server, client, prof)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -237,19 +249,18 @@ func getAgentCriteriaSchema() map[string]any {
 	}
 }
 
-func registerGetAgentCriteria(server *mcp.Server) {
+func registerGetAgentCriteria(server *mcp.Server, prof *profile.Profile) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "get_agent_criteria",
 		Title: "Get Agent Criteria",
-		Description: `Read the Gentle AI agent selection criteria from guia_gentle_ai.md.
+		Description: `Read the active profile's agent/role selection criteria.
 
-Each agent section defines:
-- What the agent does (description)
-- CRITERIOS DE SELECCIÓN: what qualities the model needs (context, reasoning, speed, cost, etc.)
-- Razonamiento para la selección: why certain tradeoffs matter
+Each role entry defines:
+- What the role does (description)
+- Criticidad: how critical the role is to the overall pipeline
 
-Use this to understand WHAT each agent needs BEFORE picking a model.
-Pass an agent ID to get only that agent's criteria.
+Use this to understand WHAT each role needs BEFORE picking a model.
+Pass a role ID to get only that role's criteria.
 
 AGENT GROUPS (display recommendations in this order):
 1. Orchestrator: gentle-orchestrator
@@ -258,7 +269,7 @@ AGENT GROUPS (display recommendations in this order):
 4. Judgment Day: jd-judge-a, jd-judge-b, jd-fix-agent`,
 		InputSchema: getAgentCriteriaSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in getAgentCriteriaInput) (*mcp.CallToolResult, any, error) {
-		content, err := guide.Extract(in.Agent)
+		content, err := guide.ExtractFromProfile(prof, in.Agent)
 		if err != nil {
 			return &mcp.CallToolResult{
 				Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
@@ -434,7 +445,7 @@ func estimateCostSchema() map[string]any {
 	}
 }
 
-func registerEstimateCost(server *mcp.Server, client *api.Client) {
+func registerEstimateCost(server *mcp.Server, client *api.Client, prof *profile.Profile) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "estimate_cost",
 		Title: "Estimate Monthly Cost",
@@ -451,7 +462,7 @@ Shows breakdown by agent and by provider.
 Use this to understand the financial impact before applying a configuration.`,
 		InputSchema: estimateCostSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in estimateCostInput) (*mcp.CallToolResult, any, error) {
-		result, err := api.EstimateCost(ctx, client, in.HoursPerDay, in.Roles)
+		result, err := api.EstimateCost(ctx, client, prof, in.HoursPerDay, in.Roles)
 		if err != nil {
 			return errorResult(err), nil, nil
 		}
@@ -472,7 +483,7 @@ func validateConfigSchema() map[string]any {
 	}
 }
 
-func registerValidateConfig(server *mcp.Server, client *api.Client) {
+func registerValidateConfig(server *mcp.Server, client *api.Client, prof *profile.Profile) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "validate_config",
 		Title: "Validate Configuration",
@@ -486,7 +497,7 @@ Use this to quickly assess if your setup is complete or if adding more
 API keys would improve recommendations.`,
 		InputSchema: validateConfigSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in validateConfigInput) (*mcp.CallToolResult, any, error) {
-		result, err := api.ValidateConfig(ctx, client)
+		result, err := api.ValidateConfig(ctx, client, prof)
 		if err != nil {
 			return errorResult(err), nil, nil
 		}
@@ -515,7 +526,7 @@ func exportConfigSchema() map[string]any {
 	}
 }
 
-func registerExportConfig(server *mcp.Server, client *api.Client) {
+func registerExportConfig(server *mcp.Server, client *api.Client, prof *profile.Profile) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "export_config",
 		Title: "Export Configuration",
@@ -530,7 +541,7 @@ This tool NEVER writes to disk. It returns the JSON for you to review and apply 
 Use this after recommend_config to get a ready-to-paste opencode.json.`,
 		InputSchema: exportConfigSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in exportConfigInput) (*mcp.CallToolResult, any, error) {
-		result, err := api.ExportConfig(ctx, client, "", in.Roles)
+		result, err := api.ExportConfig(ctx, client, prof, "", in.Roles)
 		if err != nil {
 			return errorResult(err), nil, nil
 		}
@@ -559,7 +570,7 @@ func recommendConfigSchema() map[string]any {
 	}
 }
 
-func registerRecommendConfig(server *mcp.Server, client *api.Client) {
+func registerRecommendConfig(server *mcp.Server, client *api.Client, prof *profile.Profile) {
 	mcp.AddTool(server, &mcp.Tool{
 		Name:  "recommend_config",
 		Title: "Recommend Configuration",
@@ -578,7 +589,7 @@ Agent roles evaluated:
 Pass specific roles to filter recommendations. Omit for the complete set.`,
 		InputSchema: recommendConfigSchema(),
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in recommendConfigInput) (*mcp.CallToolResult, any, error) {
-		providers, recs, err := api.RecommendConfig(ctx, client, in.Roles)
+		providers, recs, err := api.RecommendConfig(ctx, client, prof, in.Roles)
 		if err != nil {
 			return errorResult(err), nil, nil
 		}

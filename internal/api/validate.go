@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/R0LM0/somm/internal/profile"
 )
 
 // ValidationResult contains the full validation output.
@@ -31,7 +33,7 @@ type AgentCheck struct {
 }
 
 // ValidateConfig analyzes the current configuration and returns a validation result.
-func ValidateConfig(ctx context.Context, client *Client) (*ValidationResult, error) {
+func ValidateConfig(ctx context.Context, client *Client, prof *profile.Profile) (*ValidationResult, error) {
 	result := &ValidationResult{}
 
 	// 1. Check provider status.
@@ -74,7 +76,7 @@ func ValidateConfig(ctx context.Context, client *Client) (*ValidationResult, err
 	result.Providers[0].Models = goCount + zenCount
 
 	// 3. Get recommendations to compare against.
-	_, recs, err := RecommendConfig(ctx, client, nil)
+	_, recs, err := RecommendConfig(ctx, client, prof, nil)
 	if err != nil {
 		return nil, fmt.Errorf("generating recommendations: %w", err)
 	}

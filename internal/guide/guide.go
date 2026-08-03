@@ -6,8 +6,14 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/R0LM0/somm/internal/profile"
 )
 
+// guia_gentle_ai.md is kept embedded as the gentle-ai preset's reference
+// doc (demoted from the live criteria source — see ExtractFromProfile,
+// which is what backs the get_agent_criteria tool now).
+//
 //go:embed guia_gentle_ai.md
 var embeddedGuide []byte
 
@@ -110,4 +116,52 @@ func availableAgents(lines []string) []string {
 
 func normalizeLineEndings(s string) string {
 	return strings.ReplaceAll(s, "\r\n", "\n")
+}
+
+// ExtractFromProfile returns the criteria text for the requested role,
+// sourced from the active Profile's roles instead of the hardcoded
+// guia_gentle_ai.md guide. An empty agent returns every role's criteria,
+// in profile order. Lookups match the role id case-insensitively.
+func ExtractFromProfile(prof *profile.Profile, agent string) (string, error) {
+	if prof == nil || len(prof.Roles) == 0 {
+		return "", errors.New("no active profile roles available")
+	}
+
+	if strings.TrimSpace(agent) == "" {
+		var sb strings.Builder
+		for i, r := range prof.Roles {
+			if i > 0 {
+				sb.WriteString("\n\n")
+			}
+			sb.WriteString(formatRoleCriteria(r))
+		}
+		return sb.String(), nil
+	}
+
+	needle := strings.ToLower(strings.TrimSpace(agent))
+	for _, r := range prof.Roles {
+		if strings.ToLower(r.ID) == needle {
+			return formatRoleCriteria(r), nil
+		}
+	}
+
+	ids := make([]string, len(prof.Roles))
+	for i, r := range prof.Roles {
+		ids[i] = r.ID
+	}
+	sort.Strings(ids)
+	return "", fmt.Errorf("agent %q not found in the active profile. Available agents: %s", agent, strings.Join(ids, ", "))
+}
+
+// formatRoleCriteria renders a single role's criteria as a text block.
+func formatRoleCriteria(r profile.Role) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("### %s\n\n", r.ID))
+	if r.Criticidad != "" {
+		sb.WriteString(fmt.Sprintf("**Criticidad: %s**\n\n", r.Criticidad))
+	}
+	if r.Description != "" {
+		sb.WriteString(r.Description)
+	}
+	return sb.String()
 }

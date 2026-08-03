@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/R0LM0/somm/internal/profile"
 )
 
 // ConfigChange describes a single model change for an agent.
@@ -27,7 +29,7 @@ type ExportResult struct {
 // ExportConfig reads the existing opencode.json, gets model recommendations,
 // and returns an updated config with ONLY the "model" field changed per agent.
 // It never writes to disk — the caller decides.
-func ExportConfig(ctx context.Context, client *Client, opencodePath string, roles []string) (ExportResult, error) {
+func ExportConfig(ctx context.Context, client *Client, prof *profile.Profile, opencodePath string, roles []string) (ExportResult, error) {
 	if opencodePath == "" {
 		opencodePath = detectConfigPath()
 	}
@@ -37,7 +39,7 @@ func ExportConfig(ctx context.Context, client *Client, opencodePath string, role
 		return ExportResult{}, fmt.Errorf("reading config: %w", err)
 	}
 
-	_, recs, err := RecommendConfig(ctx, client, roles)
+	_, recs, err := RecommendConfig(ctx, client, prof, roles)
 	if err != nil {
 		return ExportResult{}, fmt.Errorf("generating recommendations: %w", err)
 	}

@@ -65,7 +65,7 @@ func TestEstimateCost_WithMockModels(t *testing.T) {
 		ORAPIKey:   "test-or-key",
 	}
 
-	result, err := EstimateCost(context.Background(), client, 8, nil)
+	result, err := EstimateCost(context.Background(), client, mustPreset(t), 8, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestEstimateCost_FilterRoles(t *testing.T) {
 		ORAPIKey:   "test-or-key",
 	}
 
-	result, err := EstimateCost(context.Background(), client, 8, []string{"orchestrator"})
+	result, err := EstimateCost(context.Background(), client, mustPreset(t), 8, []string{"orchestrator"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestEstimateCost_DefaultHoursPerDay(t *testing.T) {
 	}
 
 	// Zero hours should default to 8.
-	result, err := EstimateCost(context.Background(), client, 0, []string{"orchestrator"})
+	result, err := EstimateCost(context.Background(), client, mustPreset(t), 0, []string{"orchestrator"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestEstimateCost_DefaultHoursPerDay(t *testing.T) {
 
 func TestEstimateCost_MissingOCKey(t *testing.T) {
 	client := &Client{OCAPIKey: "", ORAPIKey: ""}
-	_, err := EstimateCost(context.Background(), client, 8, nil)
+	_, err := EstimateCost(context.Background(), client, mustPreset(t), 8, nil)
 	if err == nil {
 		t.Fatal("expected error for missing OC key")
 	}

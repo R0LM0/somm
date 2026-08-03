@@ -12,7 +12,7 @@ import (
 
 func TestExportConfig_MissingOCKey(t *testing.T) {
 	client := &Client{OCAPIKey: "", ORAPIKey: ""}
-	_, err := ExportConfig(context.Background(), client, "", nil)
+	_, err := ExportConfig(context.Background(), client, mustPreset(t), "", nil)
 	if err == nil {
 		t.Fatal("expected error for missing OC key, got nil")
 	}
@@ -44,7 +44,7 @@ func TestExportConfig_EmptyConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	emptyPath := filepath.Join(tmpDir, "opencode.json")
 
-	result, err := ExportConfig(context.Background(), client, emptyPath, []string{"sdd-apply"})
+	result, err := ExportConfig(context.Background(), client, mustPreset(t), emptyPath, []string{"sdd-apply"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestExportConfig_ExistingConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	result, err := ExportConfig(context.Background(), client, configPath, []string{"sdd-apply"})
+	result, err := ExportConfig(context.Background(), client, mustPreset(t), configPath, []string{"sdd-apply"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestExportConfig_NonexistentFile(t *testing.T) {
 		ORAPIKey:   "test-or-key",
 	}
 
-	result, err := ExportConfig(context.Background(), client, "/nonexistent/path/opencode.json", nil)
+	result, err := ExportConfig(context.Background(), client, mustPreset(t), "/nonexistent/path/opencode.json", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

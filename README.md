@@ -53,6 +53,7 @@ make install
 |----------|----------|-------------|
 | `OPENCODE_API_KEY` | Yes | OpenCode Go/Zen subscription key |
 | `OPENROUTER_API_KEY` | No | OpenRouter API key for benchmarks |
+| `SOMM_PROFILE` | No | Path to a role profile YAML file (see [Role profiles](#role-profiles)) |
 
 ### .env file
 
@@ -66,7 +67,42 @@ OPENROUTER_API_KEY=sk-or-your-key-here
 ### Flags
 
 ```bash
-somm -opencode-api-key sk-xxx -openrouter-api-key sk-or-xxx
+somm -opencode-api-key sk-xxx -openrouter-api-key sk-or-xxx -profile ./somm.yaml
+```
+
+### Role profiles
+
+Recommendations are driven by a `Profile`: a list of roles, each with scoring
+`weights` over `intelligence`/`coding`/`agentic` benchmarks and optional hard
+constraints (`min_context`, `max_input_price`, `requires`, `exclude_family_of`).
+By default, Somm ships the `gentle-ai` preset (the original 19-role taxonomy)
+embedded in the binary — no configuration needed.
+
+The active profile is resolved in this order, using the first source found:
+
+1. `-profile <path>` CLI flag
+2. `SOMM_PROFILE` environment variable
+3. `./somm.yaml` in the current working directory
+4. `$XDG_CONFIG_HOME/somm/somm.yaml` (or `~/.config/somm/somm.yaml`)
+5. the embedded `gentle-ai` preset
+
+A malformed or invalid profile file at any of these sources fails loud — the
+server does not start with a silently-substituted default. Bring your own
+roles with a YAML file like:
+
+```yaml
+version: 1
+defaults:
+  min_context: 32000
+roles:
+  - id: my-agent
+    description: "needs strong coding + a context floor"
+    criticidad: "CRÍTICO"
+    weights:
+      coding: 0.7
+      intelligence: 0.3
+    max_input_price: 5.0
+    requires: ["reasoning"]
 ```
 
 ## Usage

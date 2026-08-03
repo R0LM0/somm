@@ -9,7 +9,7 @@ import (
 
 func TestValidateConfig_MissingOCKey(t *testing.T) {
 	client := &Client{OCAPIKey: "", ORAPIKey: ""}
-	_, err := ValidateConfig(context.Background(), client)
+	_, err := ValidateConfig(context.Background(), client, mustPreset(t))
 	if err == nil {
 		t.Fatal("expected error for missing OC key, got nil")
 	}
@@ -55,7 +55,8 @@ func TestValidateConfig_WithMockModels(t *testing.T) {
 		ORAPIKey:   "test-or-key",
 	}
 
-	result, err := ValidateConfig(context.Background(), client)
+	prof := mustPreset(t)
+	result, err := ValidateConfig(context.Background(), client, prof)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -72,9 +73,8 @@ func TestValidateConfig_WithMockModels(t *testing.T) {
 	}
 
 	// Verify agent checks.
-	allRoles := AllAgentRoles()
-	if len(result.AgentChecks) != len(allRoles) {
-		t.Fatalf("expected %d agent checks, got %d", len(allRoles), len(result.AgentChecks))
+	if len(result.AgentChecks) != len(prof.Roles) {
+		t.Fatalf("expected %d agent checks, got %d", len(prof.Roles), len(result.AgentChecks))
 	}
 
 	// Verify score is in range.
@@ -106,7 +106,7 @@ func TestValidateConfig_NoOpenRouter(t *testing.T) {
 		ORAPIKey:   "",
 	}
 
-	result, err := ValidateConfig(context.Background(), client)
+	result, err := ValidateConfig(context.Background(), client, mustPreset(t))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
