@@ -83,8 +83,8 @@ func TestServerInitialize(t *testing.T) {
 	if !strings.Contains(body, `"id":1`) {
 		t.Fatalf("initialize response missing id=1: %s", body)
 	}
-	if !strings.Contains(body, `"model-advisor"`) {
-		t.Fatalf("initialize response missing server name model-advisor: %s", body)
+	if !strings.Contains(body, `"somm"`) {
+		t.Fatalf("initialize response missing server name somm: %s", body)
 	}
 }
 

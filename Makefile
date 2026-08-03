@@ -1,7 +1,7 @@
 # IMPORTANT: When adding new features, update README.md accordingly
 
-BINARY     := model-advisor
-MODULE     := ./cmd/server
+BINARY     := somm
+MODULE     := ./cmd/somm
 
 VERSION    ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT     ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")

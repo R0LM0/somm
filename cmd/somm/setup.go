@@ -25,7 +25,7 @@ type mcpEntry struct {
 }
 
 func runSetup() {
-	fmt.Println("🔧 Model Advisor Setup Wizard")
+	fmt.Println("🔧 Somm Setup Wizard")
 	fmt.Println("==============================")
 	fmt.Println()
 
@@ -47,7 +47,7 @@ func runSetup() {
 				fmt.Printf("❌ Error actualizando: %v\n", err)
 			} else {
 				fmt.Println("✅ Actualizado a", latestVersion)
-				fmt.Println("🔄 Reiniciá el setup con: model-advisor setup")
+				fmt.Println("🔄 Reiniciá el setup con: somm setup")
 				return
 			}
 		}
@@ -72,7 +72,7 @@ func runSetup() {
 	// Step 3: Check if already configured
 	binaryPath, _ := os.Executable()
 	alreadyConfigured := false
-	if entry, exists := config.MCP["model-advisor"]; exists {
+	if entry, exists := config.MCP["somm"]; exists {
 		if len(entry.Command) > 0 {
 			binaryPath = entry.Command[0]
 			alreadyConfigured = true
@@ -80,7 +80,7 @@ func runSetup() {
 	}
 
 	if alreadyConfigured {
-		fmt.Printf("✅ model-advisor ya está configurado\n")
+		fmt.Printf("✅ somm ya está configurado\n")
 		fmt.Printf("   Ubicación: %s\n\n", binaryPath)
 
 		// Validate existing config
@@ -96,7 +96,7 @@ func runSetup() {
 		}
 
 		// Check OpenCode config
-		if entry, exists := config.MCP["model-advisor"]; exists {
+		if entry, exists := config.MCP["somm"]; exists {
 			if entry.Enabled {
 				fmt.Println("✅ Habilitado en OpenCode")
 			} else {
@@ -115,12 +115,12 @@ func runSetup() {
 		fmt.Println("   - validate_config")
 		fmt.Println("   - export_config")
 
-		fmt.Println("\nPara reconfigurar: model-advisor setup --force")
+		fmt.Println("\nPara reconfigurar: somm setup --force")
 		return
 	}
 
 	// Not configured - guide through setup
-	fmt.Println("❌ model-advisor no está configurado")
+	fmt.Println("❌ somm no está configurado")
 	fmt.Println()
 
 	var add bool
@@ -143,7 +143,7 @@ func runSetup() {
 			binaryPath = path
 		} else {
 			huh.NewInput().
-				Title("¿Dónde está el binario model-advisor?").
+				Title("¿Dónde está el binario somm?").
 				Value(&binaryPath).Run()
 		}
 	}
@@ -183,7 +183,7 @@ func runSetup() {
 	}
 
 	// Step 7: Update OpenCode config
-	config.MCP["model-advisor"] = mcpEntry{
+	config.MCP["somm"] = mcpEntry{
 		Command: []string{binaryPath},
 		Enabled: true,
 		Type:    "local",
@@ -214,7 +214,7 @@ func runSetup() {
 	// Create PowerShell alias
 	if err := createPowerShellAlias(); err != nil {
 		fmt.Printf("⚠️  No se pudo crear alias automático: %v\n", err)
-		fmt.Println("Creá manualmente: function msetup { model-advisor setup }")
+		fmt.Println("Creá manualmente: function msetup { somm setup }")
 	} else {
 		fmt.Println("\n✅ Alias creado: msetup")
 		fmt.Println("   Reiniciá PowerShell para usarlo")
@@ -224,7 +224,7 @@ func runSetup() {
 	fmt.Println("1. Reiniciá OpenCode")
 	fmt.Println("2. Abrí una nueva sesión")
 	fmt.Println("3. Probá: \"¿Qué modelos tengo disponibles?\"")
-	fmt.Println("\nPara reconfigurar: model-advisor setup")
+	fmt.Println("\nPara reconfigurar: somm setup")
 }
 
 func findOpenCodeConfig() (string, error) {
@@ -314,18 +314,18 @@ func createPowerShellAlias() error {
 	}
 
 	// Check if alias already exists
-	alias := "function msetup { model-advisor setup }"
+	alias := "function msetup { somm setup }"
 	if strings.Contains(string(profile), "msetup") {
 		return nil // Already exists
 	}
 
 	// Append alias
-	profile = append(profile, []byte("\n# Model Advisor alias\n"+alias+"\n")...)
+	profile = append(profile, []byte("\n# Somm alias\n"+alias+"\n")...)
 	return os.WriteFile(profilePath, profile, 0644)
 }
 
 func checkForUpdate() (string, error) {
-	resp, err := http.Get("https://api.github.com/repos/R0LM0/sub-aware-agent-model-advisor-go/releases/latest")
+	resp, err := http.Get("https://api.github.com/repos/R0LM0/somm/releases/latest")
 	if err != nil {
 		return "", err
 	}
@@ -352,8 +352,8 @@ func updateBinary(version string) error {
 		extension = ".zip"
 	}
 
-	filename := fmt.Sprintf("sub-aware-agent-model-advisor-go_%s_%s_%s%s", version, osName, arch, extension)
-	url := fmt.Sprintf("https://github.com/R0LM0/sub-aware-agent-model-advisor-go/releases/download/%s/%s", version, filename)
+	filename := fmt.Sprintf("somm_%s_%s_%s%s", version, osName, arch, extension)
+	url := fmt.Sprintf("https://github.com/R0LM0/somm/releases/download/%s/%s", version, filename)
 
 	// Download
 	resp, err := http.Get(url)
@@ -373,7 +373,7 @@ func updateBinary(version string) error {
 	}
 
 	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "model-advisor-update-*")
+	tmpDir, err := os.MkdirTemp("", "somm-update-*")
 	if err != nil {
 		return err
 	}

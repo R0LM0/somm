@@ -13,8 +13,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/R0LM0/sub-aware-agent-model-advisor-go/internal/api"
-	"github.com/R0LM0/sub-aware-agent-model-advisor-go/internal/guide"
+	"github.com/R0LM0/somm/internal/api"
+	"github.com/R0LM0/somm/internal/guide"
 	"github.com/joho/godotenv"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -33,7 +33,7 @@ func main() {
 	}
 
 	if err := run(); err != nil {
-		fmt.Fprintf(os.Stderr, "[model-advisor] Fatal error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "[somm] Fatal error: %v\n", err)
 		os.Exit(1)
 	}
 }
@@ -70,15 +70,15 @@ func run() error {
 	client := api.NewClient(nil, ocKey, orKey)
 
 	server := mcp.NewServer(&mcp.Implementation{
-		Name:    "model-advisor",
+		Name:    "somm",
 		Version: version,
-		Title:   "Model Advisor MCP Server",
+		Title:   "Somm — Model Advisor MCP Server",
 	}, &mcp.ServerOptions{
 		Instructions: "Agent-Model Recommendation Advisor. Fetches available models from OpenCode subscriptions and OpenRouter benchmarks, reads agent selection criteria from the Gentle AI guide, and helps recommend the best model for each agent/sub-agent.",
 		InitializedHandler: func(context.Context, *mcp.InitializedRequest) {
 			// Log AFTER the JSON-RPC handshake completes — stderr before this point
 			// breaks MCP clients.
-			slog.Info("model-advisor ready")
+			slog.Info("somm ready")
 		},
 	})
 

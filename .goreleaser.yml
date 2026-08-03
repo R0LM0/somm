@@ -1,8 +1,10 @@
 version: 2
 
+project_name: somm
+
 builds:
-  - main: ./cmd/server
-    binary: model-advisor
+  - main: ./cmd/somm
+    binary: somm
     env:
       - CGO_ENABLED=0
     goos:
