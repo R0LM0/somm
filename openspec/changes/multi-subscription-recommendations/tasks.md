@@ -103,18 +103,18 @@ not code correctness.
 
 ## Phase 5: Pre-Filter + Reasons + Formatter (PR 5 — depends on Phase 1/D + Phase 4/C; ATOMIC, D10/D11)
 
-- [ ] 5.1 `internal/api/recommend.go` `collectCandidates` step (3): add provider-scope hard constraint — when `role.Selection.Providers` non-empty, candidate `ProviderID` (case-insensitive) must be in that set, else skip (D10 — same tier as `MinContext`/`MaxInputPrice`, applies on both max-2/max-3 passes).
-- [ ] 5.2 `recommend.go`: extend `ProviderStatus` with `Ranked bool` + `ExcludedReason string`; `RecommendConfig` emits one entry per discovered provider (D12).
-- [ ] 5.3 `recommend.go`: zero-price CLI models (`cost.input==0 && cost.output==0`) excluded via the existing nil/zero-price gate, annotated with the flat-rate `ExcludedReason` ("flat-rate subscription, no usage-cap ranking available"), distinguishable from the generic no-pricing reason.
-- [ ] 5.4 `recommend.go`: when a role's `Providers` scope filters out every candidate, resolve via the existing nil-`findBestModel` path -> empty-`Model` `Recommendation` with a scope-specific `Reason` (D11 — MUST land with 5.1 in the same commit, a filter without the reason is a silent empty result).
-- [ ] 5.5 `recommend.go` `buildReason`: fix `subInfo`'s `" (Zen)"` fallback-for-anything-not-go/both bug — emit the actual provider name for non-OC providers.
-- [ ] 5.6 `recommend.go`: add `slugOf`/`familyOf` helpers for the pre-filter and `ExcludeFamilyOf` logic against namespaced CLI `OCID` values.
-- [ ] 5.7 `recommend.go` `FormatRecommendations`: render `ProviderStatus.Ranked`/`ExcludedReason` (stated once per provider).
-- [ ] 5.8 [RED] `recommend_test.go` `TestCollectCandidates_ProviderScopeFiltersToConfiguredSet` — scoped to `["OpenCode Go"]`, 3-provider candidate pool -> only OpenCode Go remains.
-- [ ] 5.9 [RED] `TestCollectCandidates_ProviderScopeSurvivesCapRelaxation` — scope applies unchanged across max-2->max-3.
-- [ ] 5.10 [RED] `TestRecommendConfig_NoMatchingProviderResolvesToFallbackReason` — scoped to `["Anthropic"]` unconfigured -> empty-`Model`, scope-specific `Reason`, no panic, other roles unaffected (D11 atomicity case).
-- [ ] 5.11 [RED] `TestRecommendConfig_ZeroPriceModelNeverWinsSurfacesFlatRateReason` — only $0 candidates -> fallback wins, `ProviderStatus.ExcludedReason` carries the flat-rate text.
-- [ ] 5.12 [RED] `TestBuildReason_NonOCProviderSubInfoUsesProviderName` — regression lock for the `subInfo` fix.
-- [ ] 5.13 [RED] `TestFormatRecommendations_RendersProviderExclusionReason`.
-- [ ] 5.14 [GREEN] implement until 5.8-5.13 pass; `go test ./internal/api/... -run 'TestCollectCandidates|TestRecommendConfig|TestBuildReason|TestFormatRecommendations' -v`.
-- [ ] 5.15 `go build ./... && go test ./...` — full regression; confirm byte-identical output with zero discovered providers (Behavior Unchanged golden).
+- [x] 5.1 `internal/api/recommend.go` `collectCandidates` step (3): add provider-scope hard constraint — when `role.Selection.Providers` non-empty, candidate `ProviderID` (case-insensitive) must be in that set, else skip (D10 — same tier as `MinContext`/`MaxInputPrice`, applies on both max-2/max-3 passes).
+- [x] 5.2 `recommend.go`: extend `ProviderStatus` with `Ranked bool` + `ExcludedReason string`; `RecommendConfig` emits one entry per discovered provider (D12).
+- [x] 5.3 `recommend.go`: zero-price CLI models (`cost.input==0 && cost.output==0`) excluded via the existing nil/zero-price gate, annotated with the flat-rate `ExcludedReason` ("flat-rate subscription, no usage-cap ranking available"), distinguishable from the generic no-pricing reason.
+- [x] 5.4 `recommend.go`: when a role's `Providers` scope filters out every candidate, resolve via the existing nil-`findBestModel` path -> empty-`Model` `Recommendation` with a scope-specific `Reason` (D11 — MUST land with 5.1 in the same commit, a filter without the reason is a silent empty result).
+- [x] 5.5 `recommend.go` `buildReason`: fix `subInfo`'s `" (Zen)"` fallback-for-anything-not-go/both bug — emit the actual provider name for non-OC providers.
+- [x] 5.6 `recommend.go`: add `slugOf`/`familyOf` helpers for the pre-filter and `ExcludeFamilyOf` logic against namespaced CLI `OCID` values.
+- [x] 5.7 `recommend.go` `FormatRecommendations`: render `ProviderStatus.Ranked`/`ExcludedReason` (stated once per provider).
+- [x] 5.8 [RED] `recommend_test.go` `TestCollectCandidates_ProviderScopeFiltersToConfiguredSet` — scoped to a single provider, 3-provider candidate pool -> only the scoped provider remains.
+- [x] 5.9 [RED] `TestCollectCandidates_ProviderScopeSurvivesCapRelaxation` — scope applies unchanged across max-2->max-3.
+- [x] 5.10 [RED] `TestRecommendConfig_NoMatchingProviderResolvesToFallbackReason` — scoped to an unconfigured provider -> empty-`Model`, scope-specific `Reason`, no panic, other roles unaffected (D11 atomicity case).
+- [x] 5.11 [RED] `TestRecommendConfig_ZeroPriceModelNeverWinsSurfacesFlatRateReason` — only $0 candidates -> fallback wins, `ProviderStatus.ExcludedReason` carries the flat-rate text.
+- [x] 5.12 [RED] `TestBuildReason_NonOCProviderSubInfoUsesProviderName` — regression lock for the `subInfo` fix.
+- [x] 5.13 [RED] `TestFormatRecommendations_RendersProviderExclusionReason`.
+- [x] 5.14 [GREEN] implement until 5.8-5.13 pass; `go test ./internal/api/... -run 'TestCollectCandidates|TestRecommendConfig|TestBuildReason|TestFormatRecommendations' -v`.
+- [x] 5.15 `go build ./... && go test ./...` — full regression; confirm byte-identical output with zero discovered providers (Behavior Unchanged golden).
