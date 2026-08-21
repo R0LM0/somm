@@ -8,9 +8,18 @@ import (
 	"strings"
 
 	"github.com/R0LM0/somm/v2/internal/profile"
+	"github.com/R0LM0/somm/v2/internal/profile/plans"
 )
 
 const maxScorePoints = 10
+
+// hSat is the fixed quota saturation constant (plan-quota-currency spec,
+// Requirement: Frequency Weighting): the point past which extra quota
+// headroom stops differentiating candidates. Without this cap,
+// frequency_weight is a per-role constant that cancels out of every
+// Qraw/denominator comparison and never changes the winner within a role —
+// the cap is what makes "frequency" load-bearing (design Decision 2).
+const hSat = 200.0
 
 // Recommendation is the output for a single agent role.
 type Recommendation struct {
@@ -64,11 +73,22 @@ func filterRoles(all []profile.Role, filter []string) []profile.Role {
 //     roles weighting >=2 metrics. It is an internal quality comparison
 //     value only and never feeds the ratio (design Decision 2).
 //   - price is the input price per 1M tokens.
+//   - quota holds the resolved "quota"-currency ranking denominator: the
+//     saturating affordability value for a quota-table-tabulated candidate,
+//     or the price/P_min bridge for an untabulated one. It is 0 and unread
+//     whenever the role's effective currency is "usd" (design Decision 1
+//     parity table).
+//   - hasQuota is true only when quota was resolved via the tabulated
+//     formula (as opposed to the untabulated fallback bridge); it drives
+//     buildReason's staleness surfacing (plan-quota-currency spec,
+//     Requirement: Staleness Surfacing).
 type scoredModel struct {
-	model EnrichedModel
-	qraw  float64
-	qnorm float64
-	price float64
+	model    EnrichedModel
+	qraw     float64
+	qnorm    float64
+	price    float64
+	quota    float64
+	hasQuota bool
 }
 
 // RecommendConfig computes the best model for each role in the active
@@ -100,6 +120,21 @@ func RecommendConfig(ctx context.Context, client *Client, prof *profile.Profile,
 		return providers, nil, fmt.Errorf("no matching agent roles for filter: %v", roleFilter)
 	}
 
+	// The embedded plan quota table is loaded only when at least one role's
+	// effective currency resolves to "quota" — zero I/O otherwise (design
+	// Decision 1 parity table; task 3.8).
+	var plansTable *plans.Table
+	for _, role := range roles {
+		if effectiveCurrency(role) == profile.CurrencyQuota {
+			pt, err := plans.OpenCodeZenGo()
+			if err != nil {
+				return providers, nil, fmt.Errorf("loading opencode plan quota table: %w", err)
+			}
+			plansTable = pt
+			break
+		}
+	}
+
 	// Track which models are already assigned, and which provider family
 	// was assigned to each role (for exclude_family_of).
 	assignmentCount := make(map[string]int)
@@ -108,7 +143,7 @@ func RecommendConfig(ctx context.Context, client *Client, prof *profile.Profile,
 	// Score models for each role and pick the best.
 	recs := make([]Recommendation, 0, len(roles))
 	for _, role := range roles {
-		best := findBestModel(models, role, assignmentCount, assignedFamily)
+		best := findBestModel(models, role, assignmentCount, assignedFamily, plansTable)
 		if best == nil {
 			recs = append(recs, Recommendation{
 				Agent:      role.ID,
@@ -139,7 +174,7 @@ func RecommendConfig(ctx context.Context, client *Client, prof *profile.Profile,
 			Coding:       best.model.Benchmarks.Coding,
 			Agentic:      best.model.Benchmarks.Agentic,
 			ContextLen:   best.model.ContextLength,
-			Reason:       buildReason(role, best),
+			Reason:       buildReason(role, best, plansTable),
 		}
 		recs = append(recs, rec)
 	}
@@ -158,12 +193,12 @@ func RecommendConfig(ctx context.Context, client *Client, prof *profile.Profile,
 // twice, it relaxes the constraint to max-3 to avoid returning nil. Hard
 // constraints (min_context, max_input_price, requires, exclude_family_of)
 // are never relaxed.
-func findBestModel(models []EnrichedModel, role profile.Role, used map[string]int, assignedFamily map[string]string) *scoredModel {
+func findBestModel(models []EnrichedModel, role profile.Role, used map[string]int, assignedFamily map[string]string, plansTable *plans.Table) *scoredModel {
 	// First pass: try with max-2 constraint.
-	candidates := collectCandidates(models, role, used, 2, assignedFamily)
+	candidates := collectCandidates(models, role, used, 2, assignedFamily, plansTable)
 	if len(candidates) == 0 {
 		// Second pass: relax the assignment cap to max-3 if no candidates found.
-		candidates = collectCandidates(models, role, used, 3, assignedFamily)
+		candidates = collectCandidates(models, role, used, 3, assignedFamily, plansTable)
 	}
 	if len(candidates) == 0 {
 		return nil
@@ -187,10 +222,14 @@ func findBestModel(models []EnrichedModel, role profile.Role, used map[string]in
 
 	// The comparator is selected per the role's effective objective
 	// (weighted-scoring spec, Requirement: Objective-Selected Comparator;
-	// design Decision 4).
+	// design Decision 4). The denominator each comparator divides by is
+	// selected per the role's effective currency (weighted-scoring spec,
+	// Requirement: Currency-Selected Denominator) — "usd" resolves to
+	// price, unchanged from the pre-PR2a behavior (design Decision 1).
+	curr := effectiveCurrency(role)
 	switch objective(role) {
 	case profile.ObjectiveQuality:
-		sortByQuality(candidates)
+		sortByQuality(candidates, curr)
 	case profile.ObjectiveBudget:
 		// "budget" reuses the "value" comparator over the set already
 		// restricted to max_input_price by collectCandidates' existing
@@ -198,11 +237,11 @@ func findBestModel(models []EnrichedModel, role profile.Role, used map[string]in
 		// Decision 4; role-profiles spec, Requirement: Budget Objective
 		// Requires an Effective Ceiling guarantees this ceiling always
 		// exists whenever the effective objective is "budget").
-		sortByValue(candidates)
+		sortByValue(candidates, curr)
 	default: // profile.ObjectiveValue, and the fallback for a nil Selection
 		// (a Role built directly, e.g. in tests, without going through
 		// profile.Load's merge pass).
-		sortByValue(candidates)
+		sortByValue(candidates, curr)
 	}
 
 	return &candidates[0]
@@ -220,13 +259,39 @@ func objective(role profile.Role) string {
 	return role.Selection.Objective
 }
 
-// sortByValue is the original ranking closure (design Decision 1: unedited,
-// moved verbatim into a shared helper): Qraw/price descending, tiebreak
-// Qraw descending. It backs both the "value" objective and, unmodified,
-// the "budget" objective (design Decision 4).
-func sortByValue(candidates []scoredModel) {
+// effectiveCurrency returns the role's effective ranking currency,
+// defaulting to "usd" when Selection is unset. This keeps the ranking
+// helpers safe for a Role built directly (not run through profile.Load's
+// merge pass) and matches design Decision 1: an absent selection block
+// always resolves to the usd currency.
+func effectiveCurrency(role profile.Role) string {
+	if role.Selection == nil || role.Selection.Currency == "" {
+		return profile.CurrencyUSD
+	}
+	return role.Selection.Currency
+}
+
+// denominatorOf returns the ranking denominator for a candidate under the
+// given effective currency: "usd" resolves to price (unchanged from
+// pre-PR2a behavior); "quota" resolves to the pre-resolved quota-currency
+// denominator (weighted-scoring spec, Requirement: Currency-Selected
+// Denominator).
+func denominatorOf(c scoredModel, currency string) float64 {
+	if currency == profile.CurrencyQuota {
+		return c.quota
+	}
+	return c.price
+}
+
+// sortByValue is the original ranking closure (design Decision 1: unedited
+// under "usd", moved verbatim into a shared helper): Qraw/denominator
+// descending, tiebreak Qraw descending. It backs both the "value" objective
+// and, unmodified, the "budget" objective (design Decision 4). Under "usd"
+// currency, denominatorOf resolves to price, so the ranking output is
+// byte-identical to the pre-PR2a closure.
+func sortByValue(candidates []scoredModel, currency string) {
 	sort.Slice(candidates, func(i, j int) bool {
-		ri, rj := qualityPriceRatio(candidates[i]), qualityPriceRatio(candidates[j])
+		ri, rj := qualityPriceRatio(candidates[i], currency), qualityPriceRatio(candidates[j], currency)
 		if ri != rj {
 			return ri > rj
 		}
@@ -235,32 +300,34 @@ func sortByValue(candidates []scoredModel) {
 	})
 }
 
-// sortByQuality ranks candidates by Qraw descending, tiebreak by price
-// (the "usd" denominator; PR2a adds the "quota" denominator) ascending,
-// tiebreak OCID ascending for a total order (weighted-scoring spec,
-// Requirement: Objective-Selected Comparator). The OCID tiebreak makes the
-// order deterministic even when Qraw AND price both tie — common on
-// single-metric roles, and sort.Slice is unstable — so the golden test
-// never becomes flaky (design Decision 4).
-func sortByQuality(candidates []scoredModel) {
+// sortByQuality ranks candidates by Qraw descending, tiebreak by the
+// currency-selected denominator ascending, tiebreak OCID ascending for a
+// total order (weighted-scoring spec, Requirement: Objective-Selected
+// Comparator). The OCID tiebreak makes the order deterministic even when
+// Qraw AND the denominator both tie — common on single-metric roles, and
+// sort.Slice is unstable — so the golden test never becomes flaky (design
+// Decision 4).
+func sortByQuality(candidates []scoredModel, currency string) {
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].qraw != candidates[j].qraw {
 			return candidates[i].qraw > candidates[j].qraw
 		}
-		if candidates[i].price != candidates[j].price {
-			return candidates[i].price < candidates[j].price
+		di, dj := denominatorOf(candidates[i], currency), denominatorOf(candidates[j], currency)
+		if di != dj {
+			return di < dj
 		}
 		return candidates[i].model.OCID < candidates[j].model.OCID
 	})
 }
 
-// qualityPriceRatio returns Qraw / price for a candidate, or 0 when price
-// is not positive.
-func qualityPriceRatio(c scoredModel) float64 {
-	if c.price <= 0 {
+// qualityPriceRatio returns Qraw / denominator for a candidate under the
+// given effective currency, or 0 when the denominator is not positive.
+func qualityPriceRatio(c scoredModel, currency string) float64 {
+	d := denominatorOf(c, currency)
+	if d <= 0 {
 		return 0
 	}
-	return c.qraw / c.price
+	return c.qraw / d
 }
 
 // collectCandidates builds scored models for a role that pass the hard
@@ -271,7 +338,13 @@ func qualityPriceRatio(c scoredModel) float64 {
 //  3. apply min_context, max_input_price, requires, exclude_family_of
 //  4. for weighted roles, skip candidates with a nil value on any
 //     positively-weighted metric
-func collectCandidates(models []EnrichedModel, role profile.Role, used map[string]int, maxUses int, assignedFamily map[string]string) []scoredModel {
+//
+// When the role's effective currency is "quota", each returned candidate
+// also has its quota-currency denominator resolved (plansTable may be nil
+// only when the caller never intends to rank under "quota"; a nil table
+// under "quota" currency degrades every candidate to the untabulated
+// fallback rather than panicking).
+func collectCandidates(models []EnrichedModel, role profile.Role, used map[string]int, maxUses int, assignedFamily map[string]string, plansTable *plans.Table) []scoredModel {
 	candidates := make([]scoredModel, 0)
 
 	for _, m := range models {
@@ -337,7 +410,54 @@ func collectCandidates(models []EnrichedModel, role profile.Role, used map[strin
 		candidates = append(candidates, scoredModel{model: m, qraw: qraw, price: price})
 	}
 
+	if effectiveCurrency(role) == profile.CurrencyQuota {
+		resolveQuotaDenominators(candidates, role, plansTable)
+	}
+
 	return candidates
+}
+
+// resolveQuotaDenominators fills each candidate's quota-currency ranking
+// denominator in place: a candidate present in plansTable uses the
+// saturating affordability formula
+// H_sat / min(requests_per_5h / frequency_weight(role), H_sat) (design
+// Decision 2; plan-quota-currency spec, Requirement: Frequency Weighting);
+// a candidate absent from the table (or when plansTable is nil) uses the
+// price/P_min bridge over this role's constraint-filtered candidate set —
+// P_min is the minimum price across candidates, computed once per call
+// (plan-quota-currency spec, Requirement: Fallback for Untabulated Models).
+func resolveQuotaDenominators(candidates []scoredModel, role profile.Role, plansTable *plans.Table) {
+	if len(candidates) == 0 {
+		return
+	}
+
+	pMin := math.Inf(1)
+	for _, c := range candidates {
+		if c.price < pMin {
+			pMin = c.price
+		}
+	}
+
+	fw := profile.FrequencyWeight(role.Frequency)
+	for i := range candidates {
+		if plansTable != nil {
+			if rp5h, ok := plansTable.Requests(candidates[i].model.OCID); ok {
+				headroom := float64(rp5h) / fw
+				if headroom > hSat {
+					headroom = hSat
+				}
+				candidates[i].quota = hSat / headroom
+				candidates[i].hasQuota = true
+				continue
+			}
+		}
+		// Fallback: bridge onto the same bounded scale as tabulated
+		// candidates via price/P_min instead of a raw, unscaled usd price.
+		candidates[i].hasQuota = false
+		if pMin > 0 {
+			candidates[i].quota = candidates[i].price / pMin
+		}
+	}
 }
 
 // satisfiesRequires checks that a candidate model satisfies every
@@ -444,7 +564,11 @@ func dominantMetric(weights map[string]float64) string {
 }
 
 // buildReason generates a human-readable reason for the recommendation.
-func buildReason(role profile.Role, best *scoredModel) string {
+// plansTable is consulted only when the role's effective currency is
+// "quota", to surface the winning candidate's requests_per_5h and the
+// table's measured_at date (plan-quota-currency spec, Requirement:
+// Staleness Surfacing); it may be nil.
+func buildReason(role profile.Role, best *scoredModel, plansTable *plans.Table) string {
 	m := best.model
 	price := 0.0
 	if m.Pricing != nil {
@@ -478,6 +602,23 @@ func buildReason(role profile.Role, best *scoredModel) string {
 		subInfo = " (Go)"
 	} else {
 		subInfo = " (Zen)"
+	}
+
+	// Under "quota" currency, the Reason format is selected by currency
+	// first, regardless of objective: the plan-quota-currency spec's
+	// Staleness Surfacing requirement applies to "every recommendation
+	// whose denominator was resolved via the quota table", not only the
+	// "value" objective. A tabulated winner surfaces its requests_per_5h
+	// and the table's measured_at date; a fallback winner explicitly marks
+	// the absence of a measured quota and omits any staleness claim
+	// (design Decision 6; plan-quota-currency spec, Requirement: Staleness
+	// Surfacing, both scenarios).
+	if effectiveCurrency(role) == profile.CurrencyQuota {
+		if best.hasQuota && plansTable != nil {
+			reqs, _ := plansTable.Requests(m.OCID)
+			return fmt.Sprintf("Mejor calidad/cuota: %s, %d req/5h (medido %s), $%.3f/M input%s%s — %s", metric, reqs, plansTable.MeasuredAt, price, ctxInfo, subInfo, role.Description)
+		}
+		return fmt.Sprintf("Mejor relación calidad/precio (sin cuota medida): %s, $%.3f/M input%s%s — %s", metric, price, ctxInfo, subInfo, role.Description)
 	}
 
 	// Reason text is selected per the role's effective objective (design
