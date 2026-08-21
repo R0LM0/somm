@@ -313,6 +313,43 @@ roles:
 	})
 }
 
+func TestLoad_UnknownFrequencyValueRejected(t *testing.T) {
+	data := []byte(`
+version: 1
+roles:
+  - id: custom-role
+    frequency: extreme
+`)
+
+	_, err := Load(data)
+	if err == nil {
+		t.Fatal("expected error for unknown frequency value, got nil")
+	}
+	if !strings.Contains(err.Error(), "extreme") {
+		t.Errorf("expected error to name the unknown frequency %q, got: %v", "extreme", err)
+	}
+}
+
+func TestLoad_FrequencyAcceptedValuesLoad(t *testing.T) {
+	for _, freq := range []string{"high", "medium", "low"} {
+		t.Run(freq, func(t *testing.T) {
+			data := []byte(`
+version: 1
+roles:
+  - id: custom-role
+    frequency: ` + freq + `
+`)
+			p, err := Load(data)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if p.Roles[0].Frequency != freq {
+				t.Errorf("Frequency = %q, want %q", p.Roles[0].Frequency, freq)
+			}
+		})
+	}
+}
+
 func TestLoad_DefaultsMerge(t *testing.T) {
 	minCtx := int64(8000)
 	data := []byte(`

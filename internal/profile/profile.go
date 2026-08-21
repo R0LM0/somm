@@ -46,6 +46,39 @@ var validCurrencies = map[string]bool{
 	CurrencyQuota: true,
 }
 
+// Frequency values accepted by a role's Frequency field. Frequency is
+// orthogonal to Criticidad and is read only under currency: quota
+// (role-profiles spec, Requirement: Frequency Field).
+const (
+	FrequencyHigh   = "high"
+	FrequencyMedium = "medium"
+	FrequencyLow    = "low"
+)
+
+// validFrequencies is the set of frequency values accepted in a role's
+// Frequency field.
+var validFrequencies = map[string]bool{
+	FrequencyHigh:   true,
+	FrequencyMedium: true,
+	FrequencyLow:    true,
+}
+
+// FrequencyWeight maps a role's effective Frequency to its fixed quota
+// weighting multiplier: high -> 4.0, medium (and "" unset) -> 1.0, low ->
+// 0.25 (plan-quota-currency spec, Requirement: Frequency Weighting). The
+// symmetric x4 ladder makes one frequency step a 4x change in bucket
+// consumption.
+func FrequencyWeight(freq string) float64 {
+	switch freq {
+	case FrequencyHigh:
+		return 4.0
+	case FrequencyLow:
+		return 0.25
+	default: // FrequencyMedium and "" (unset)
+		return 1.0
+	}
+}
+
 // Selection controls which comparator ranks candidates (Objective) and
 // which denominator the comparator divides by (Currency). Both fields are
 // independent and resolve at load time: an absent block, or an absent
@@ -91,6 +124,10 @@ type Role struct {
 	// resolved, non-nil effective selection for this role (role -> profile
 	// -> {value, usd}) — see Requirement: Per-Role Selection Override.
 	Selection *Selection `yaml:"selection,omitempty"`
+	// Frequency is read only when the role's effective currency is "quota"
+	// and is ignored (not an error) under "usd" (role-profiles spec,
+	// Requirement: Frequency Field).
+	Frequency string `yaml:"frequency,omitempty"` // high | medium | low
 	// currencyExplicit records whether the resolved Currency came from an
 	// explicit role- or profile-level selection.currency, as opposed to the
 	// {value, usd} fallback. Unexported: not YAML input, set during merge.
