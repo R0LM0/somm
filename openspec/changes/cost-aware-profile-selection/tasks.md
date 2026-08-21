@@ -54,24 +54,24 @@ before starting PR1.
 
 ## Phase 3 (PR2a): Plans Package and Quota Comparator
 
-- [ ] 3.1 Create `internal/profile/plans/opencode-zen-go.yaml`: `plan`, `measured_at` (`2006-01-02`), `models: ocId -> requests_per_5h` for at least one tier (plan-quota-currency: Embedded Quota Table).
-- [ ] 3.2 Create `internal/profile/plans/plans.go`: `//go:embed opencode-zen-go.yaml`, `Table{Plan, MeasuredAt, Models}`, `OpenCodeZenGo() (*Table, error)` validating `MeasuredAt` as `2006-01-02`, `(*Table).Requests(ocID) (int, bool)` — `ok=false` for absent, never 0-as-default (plan-quota-currency: Embedded Quota Table both scenarios; design Interfaces).
-- [ ] 3.3 In `internal/profile/profile.go`, add `Role.Frequency string` (`frequency,omitempty`) and `FrequencyWeight(freq string) float64` (`high`->4.0, `medium`/`""`->1.0, `low`->0.25) (role-profiles: Frequency Field; plan-quota-currency: Frequency Weighting).
-- [ ] 3.4 In `internal/profile/load.go` `validate()`, reject unknown `frequency` values, naming the value (role-profiles: Frequency Field "Unknown frequency value rejected").
-- [ ] 3.5 In `internal/api/recommend.go`, add `quota`/`hasQuota` fields to `scoredModel`; in `collectCandidates`, when effective currency is `quota`, resolve `denominator = H_sat / min(rp5h/FrequencyWeight(role.Frequency), H_sat)` (`H_sat=200`) for tabulated candidates, else the bridged `denominator = price / P_min` over the role's constraint-filtered set (plan-quota-currency: Frequency Weighting, Fallback for Untabulated Models; weighted-scoring: Currency-Selected Denominator; design Decision 2 & 3).
-- [ ] 3.6 Wire the resolved `quota`/`usd` denominator into the PR1 `value`/`quality`/`budget` comparators without altering the `value`+`usd` unedited arm (weighted-scoring: Currency-Selected Denominator).
-- [ ] 3.7 Update `buildReason`: `quota`-tabulated winners append `measured_at`; untabulated/fallback winners omit any staleness claim (plan-quota-currency: Staleness Surfacing, both scenarios; design Decision 6).
-- [ ] 3.8 In `RecommendConfig`, load the plans table only when at least one role's effective currency resolves to `quota` — zero I/O otherwise (design Decision 1 parity table).
+- [x] 3.1 Create `internal/profile/plans/opencode-zen-go.yaml`: `plan`, `measured_at` (`2006-01-02`), `models: ocId -> requests_per_5h` for at least one tier (plan-quota-currency: Embedded Quota Table).
+- [x] 3.2 Create `internal/profile/plans/plans.go`: `//go:embed opencode-zen-go.yaml`, `Table{Plan, MeasuredAt, Models}`, `OpenCodeZenGo() (*Table, error)` validating `MeasuredAt` as `2006-01-02`, `(*Table).Requests(ocID) (int, bool)` — `ok=false` for absent, never 0-as-default (plan-quota-currency: Embedded Quota Table both scenarios; design Interfaces).
+- [x] 3.3 In `internal/profile/profile.go`, add `Role.Frequency string` (`frequency,omitempty`) and `FrequencyWeight(freq string) float64` (`high`->4.0, `medium`/`""`->1.0, `low`->0.25) (role-profiles: Frequency Field; plan-quota-currency: Frequency Weighting).
+- [x] 3.4 In `internal/profile/load.go` `validate()`, reject unknown `frequency` values, naming the value (role-profiles: Frequency Field "Unknown frequency value rejected").
+- [x] 3.5 In `internal/api/recommend.go`, add `quota`/`hasQuota` fields to `scoredModel`; in `collectCandidates`, when effective currency is `quota`, resolve `denominator = H_sat / min(rp5h/FrequencyWeight(role.Frequency), H_sat)` (`H_sat=200`) for tabulated candidates, else the bridged `denominator = price / P_min` over the role's constraint-filtered set (plan-quota-currency: Frequency Weighting, Fallback for Untabulated Models; weighted-scoring: Currency-Selected Denominator; design Decision 2 & 3).
+- [x] 3.6 Wire the resolved `quota`/`usd` denominator into the PR1 `value`/`quality`/`budget` comparators without altering the `value`+`usd` unedited arm (weighted-scoring: Currency-Selected Denominator).
+- [x] 3.7 Update `buildReason`: `quota`-tabulated winners append `measured_at`; untabulated/fallback winners omit any staleness claim (plan-quota-currency: Staleness Surfacing, both scenarios; design Decision 6).
+- [x] 3.8 In `RecommendConfig`, load the plans table only when at least one role's effective currency resolves to `quota` — zero I/O otherwise (design Decision 1 parity table).
 
 ## Phase 4 (PR2a): Tests — Plans, Quota, Frequency
 
-- [ ] 4.1 `internal/profile/plans/plans_test.go`: known `ocId` resolves `requests_per_5h`; unknown `ocId` returns `ok=false`; `measured_at` parses as `2006-01-02` (plan-quota-currency: Embedded Quota Table both scenarios).
-- [ ] 4.2 `internal/api/recommend_test.go`: Decision 2/3's exact P/C/U worked example at `frequency: high` and `frequency: low`, asserting the ranking inversion and the `H_sat=200` boundary (weighted-scoring "quota currency ranks high-quota cheap model above low-quota premium model"; plan-quota-currency "Higher frequency weight favors quota-abundant models").
-- [ ] 4.3 `internal/api/recommend_test.go`: untabulated candidate is ranked, never excluded/errored, using the exact `P_min=2.0`/`price=4.0` -> `denominator=2.0` bridge (plan-quota-currency: Fallback for Untabulated Models; weighted-scoring "model missing from quota table uses the bridged denominator").
-- [ ] 4.4 `internal/api/recommend_test.go`: `Reason` for a tabulated winner contains `measured_at`; `Reason` for a fallback winner omits it (plan-quota-currency: Staleness Surfacing, both scenarios).
-- [ ] 4.5 `internal/profile/load_test.go`: unknown `frequency` value fails naming it; `frequency` has no ranking effect under `currency: usd` (role-profiles: Frequency Field, both scenarios).
-- [ ] 4.6 Re-run `TestGoldenParity`: still 0 diff lines against `testdata/gentle-ai.golden` after PR2a (design mechanical proof, both PRs).
-- [ ] 4.7 Run `go build ./...`, `go vet ./...`, `go test ./internal/profile/... ./internal/api/...`.
+- [x] 4.1 `internal/profile/plans/plans_test.go`: known `ocId` resolves `requests_per_5h`; unknown `ocId` returns `ok=false`; `measured_at` parses as `2006-01-02` (plan-quota-currency: Embedded Quota Table both scenarios).
+- [x] 4.2 `internal/api/recommend_test.go`: Decision 2/3's exact P/C/U worked example at `frequency: high` and `frequency: low`, asserting the ranking inversion and the `H_sat=200` boundary (weighted-scoring "quota currency ranks high-quota cheap model above low-quota premium model"; plan-quota-currency "Higher frequency weight favors quota-abundant models").
+- [x] 4.3 `internal/api/recommend_test.go`: untabulated candidate is ranked, never excluded/errored, using the exact `P_min=2.0`/`price=4.0` -> `denominator=2.0` bridge (plan-quota-currency: Fallback for Untabulated Models; weighted-scoring "model missing from quota table uses the bridged denominator").
+- [x] 4.4 `internal/api/recommend_test.go`: `Reason` for a tabulated winner contains `measured_at`; `Reason` for a fallback winner omits it (plan-quota-currency: Staleness Surfacing, both scenarios).
+- [x] 4.5 `internal/profile/load_test.go`: unknown `frequency` value fails naming it; `frequency` has no ranking effect under `currency: usd` (role-profiles: Frequency Field, both scenarios).
+- [x] 4.6 Re-run `TestGoldenParity`: still 0 diff lines against `testdata/gentle-ai.golden` after PR2a (design mechanical proof, both PRs).
+- [x] 4.7 Run `go build ./...`, `go vet ./...`, `go test ./internal/profile/... ./internal/api/...`.
 
 ## Phase 5 (PR2b): Tier Capture Wizard and Wiring
 

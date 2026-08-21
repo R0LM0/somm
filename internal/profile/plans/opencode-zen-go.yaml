@@ -1,0 +1,13 @@
+# opencode-zen-go: embedded OpenCode Zen "Go" plan quota table.
+#
+# Maps OpenCode model id (ocId) -> requests_per_5h for the Zen Go plan tier.
+# A model absent from this table falls back to the price/P_min bridge
+# (plan-quota-currency spec, Requirement: Fallback for Untabulated Models)
+# instead of failing or being excluded.
+plan: opencode-zen-go
+measured_at: "2026-08-01"
+models:
+  deepseek-v4-pro: 200
+  deepseek-v4-flash: 5000
+  kimi-k2.6: 800
+  gpt-5.5-pro: 45

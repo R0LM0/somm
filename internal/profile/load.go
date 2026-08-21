@@ -64,6 +64,9 @@ func validate(p *Profile) error {
 		if err := validateSelection(r.Selection, fmt.Sprintf("role %q selection", r.ID)); err != nil {
 			return err
 		}
+		if r.Frequency != "" && !validFrequencies[r.Frequency] {
+			return fmt.Errorf("role %q: unknown frequency value %q (valid: high, medium, low)", r.ID, r.Frequency)
+		}
 	}
 	return nil
 }

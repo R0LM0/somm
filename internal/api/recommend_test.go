@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/R0LM0/somm/v2/internal/profile"
+	"github.com/R0LM0/somm/v2/internal/profile/plans"
 )
 
 // mkModel builds an EnrichedModel for scoring-level unit tests. pricePerM is
@@ -281,7 +282,7 @@ func TestFindBestModel_RawRatioOrdering(t *testing.T) {
 	a := mkModel("model-a", float64Ptr(72.5), nil, nil, 30, 200000)
 	b := mkModel("model-b", float64Ptr(52.1), nil, nil, 0.95, 200000)
 
-	best := findBestModel([]EnrichedModel{a, b}, role, map[string]int{}, map[string]string{})
+	best := findBestModel([]EnrichedModel{a, b}, role, map[string]int{}, map[string]string{}, nil)
 	if best == nil {
 		t.Fatal("expected a candidate")
 	}
@@ -305,7 +306,7 @@ func TestFindBestModel_DefaultObjectiveMatchesValueRanking(t *testing.T) {
 	a := mkModel("model-a", float64Ptr(72.5), nil, nil, 30, 200000)
 	b := mkModel("model-b", float64Ptr(52.1), nil, nil, 0.95, 200000)
 
-	best := findBestModel([]EnrichedModel{a, b}, role, map[string]int{}, map[string]string{})
+	best := findBestModel([]EnrichedModel{a, b}, role, map[string]int{}, map[string]string{}, nil)
 	if best == nil {
 		t.Fatal("expected a candidate")
 	}
@@ -326,7 +327,7 @@ func TestFindBestModel_QualityObjectivePicksTopQraw(t *testing.T) {
 	a := mkModel("model-a", float64Ptr(90), nil, nil, 50, 200000) // Qraw=90, price=50
 	b := mkModel("model-b", float64Ptr(80), nil, nil, 5, 200000)  // Qraw=80, price=5 (better ratio)
 
-	best := findBestModel([]EnrichedModel{a, b}, role, map[string]int{}, map[string]string{})
+	best := findBestModel([]EnrichedModel{a, b}, role, map[string]int{}, map[string]string{}, nil)
 	if best == nil {
 		t.Fatal("expected a candidate")
 	}
@@ -347,7 +348,7 @@ func TestFindBestModel_QualityObjectiveTiesBrokenByLowerPrice(t *testing.T) {
 	cheap := mkModel("cheap", float64Ptr(70), nil, nil, 2, 200000)
 	pricey := mkModel("pricey", float64Ptr(70), nil, nil, 20, 200000)
 
-	best := findBestModel([]EnrichedModel{pricey, cheap}, role, map[string]int{}, map[string]string{})
+	best := findBestModel([]EnrichedModel{pricey, cheap}, role, map[string]int{}, map[string]string{}, nil)
 	if best == nil {
 		t.Fatal("expected a candidate")
 	}
@@ -369,7 +370,7 @@ func TestFindBestModel_QualityObjectiveOCIDTiebreakForFullTie(t *testing.T) {
 	zModel := mkModel("z-model", float64Ptr(70), nil, nil, 5, 200000)
 	aModel := mkModel("a-model", float64Ptr(70), nil, nil, 5, 200000)
 
-	best := findBestModel([]EnrichedModel{zModel, aModel}, role, map[string]int{}, map[string]string{})
+	best := findBestModel([]EnrichedModel{zModel, aModel}, role, map[string]int{}, map[string]string{}, nil)
 	if best == nil {
 		t.Fatal("expected a candidate")
 	}
@@ -396,7 +397,7 @@ func TestFindBestModel_BudgetObjectiveNeverExceedsCeiling(t *testing.T) {
 	// Worse ratio (60/4=15) but at/below the ceiling — must win under budget.
 	withinCeiling := mkModel("within-ceiling", float64Ptr(60), nil, nil, 4, 200000)
 
-	best := findBestModel([]EnrichedModel{aboveCeiling, withinCeiling}, role, map[string]int{}, map[string]string{})
+	best := findBestModel([]EnrichedModel{aboveCeiling, withinCeiling}, role, map[string]int{}, map[string]string{}, nil)
 	if best == nil {
 		t.Fatal("expected a candidate")
 	}
@@ -413,7 +414,7 @@ func TestBuildReason_ValueObjectiveUnchanged(t *testing.T) {
 	m := mkModel("model-a", float64Ptr(72.5), nil, nil, 30, 200000)
 	best := &scoredModel{model: m, qraw: 72.5, price: 30}
 
-	got := buildReason(role, best)
+	got := buildReason(role, best, nil)
 	want := "Mejor relación calidad/precio: 72.5 intelligence, $30.000/M input, 200K ctx (Go + Zen) — role desc"
 	if got != want {
 		t.Errorf("buildReason() = %q, want %q", got, want)
@@ -432,7 +433,7 @@ func TestBuildReason_QualityObjective(t *testing.T) {
 	m := mkModel("model-a", float64Ptr(90), nil, nil, 50, 200000)
 	best := &scoredModel{model: m, qraw: 90, price: 50}
 
-	got := buildReason(role, best)
+	got := buildReason(role, best, nil)
 	if !strings.Contains(got, "Máxima calidad disponible") {
 		t.Errorf("buildReason() = %q, want it to start with the quality-objective prefix", got)
 	}
@@ -455,7 +456,7 @@ func TestBuildReason_BudgetObjective(t *testing.T) {
 	m := mkModel("model-a", float64Ptr(60), nil, nil, 4, 200000)
 	best := &scoredModel{model: m, qraw: 60, price: 4}
 
-	got := buildReason(role, best)
+	got := buildReason(role, best, nil)
 	if !strings.Contains(got, "$5.00/M") {
 		t.Errorf("buildReason() = %q, want it to contain the effective ceiling $5.00/M", got)
 	}
@@ -480,7 +481,7 @@ func TestCollectCandidates_HardConstraints(t *testing.T) {
 		mkModel("both-fail", float64Ptr(50), nil, nil, 10.0, 50000),   // fails both
 	}
 
-	candidates := collectCandidates(models, role, map[string]int{}, 2, map[string]string{})
+	candidates := collectCandidates(models, role, map[string]int{}, 2, map[string]string{}, nil)
 	if len(candidates) != 1 || candidates[0].model.OCID != "both-ok" {
 		t.Fatalf("expected only both-ok to remain, got %+v", candidates)
 	}
@@ -494,7 +495,7 @@ func TestCollectCandidates_ExcludeFamilyOf(t *testing.T) {
 	}
 	assignedFamily := map[string]string{"A": "OpenAI"}
 
-	candidates := collectCandidates(models, roleB, map[string]int{}, 2, assignedFamily)
+	candidates := collectCandidates(models, roleB, map[string]int{}, 2, assignedFamily, nil)
 	for _, c := range candidates {
 		if deriveProvider(c.model.OCID) == "OpenAI" {
 			t.Errorf("expected OpenAI family excluded, got %s", c.model.OCID)
@@ -544,7 +545,7 @@ func TestFindBestModel_CapRelaxationRecoversCandidate(t *testing.T) {
 	models := []EnrichedModel{mkModel("m1", float64Ptr(50), nil, nil, 1, 100000)}
 	used := map[string]int{"m1": 2} // already at cap-2
 
-	best := findBestModel(models, role, used, map[string]string{})
+	best := findBestModel(models, role, used, map[string]string{}, nil)
 	if best == nil {
 		t.Fatal("expected relaxation to cap-3 to recover the candidate")
 	}
@@ -558,7 +559,7 @@ func TestFindBestModel_ConstraintsAloneNeverRelax(t *testing.T) {
 	role := profile.Role{ID: "r", Weights: map[string]float64{profile.MetricIntelligence: 1.0}, MinContext: &minCtx}
 	models := []EnrichedModel{mkModel("m1", float64Ptr(50), nil, nil, 1, 100000)}
 
-	best := findBestModel(models, role, map[string]int{}, map[string]string{})
+	best := findBestModel(models, role, map[string]int{}, map[string]string{}, nil)
 	if best != nil {
 		t.Errorf("expected no candidate (hard constraint unmet even after relaxation), got %+v", best)
 	}
@@ -608,7 +609,7 @@ func TestFindBestModel_EmptyWeightsSortsByPriceAscending(t *testing.T) {
 		mkModel("cheap-model", float64Ptr(30), nil, nil, 1, 100000),
 	}
 
-	best := findBestModel(models, role, map[string]int{}, map[string]string{})
+	best := findBestModel(models, role, map[string]int{}, map[string]string{}, nil)
 	if best == nil || best.model.OCID != "cheap-model" {
 		t.Fatalf("expected cheapest model to win, got %+v", best)
 	}
@@ -622,9 +623,166 @@ func TestFindBestModel_EmptyWeightsNullIntelligenceFallsBackTo50(t *testing.T) {
 		mkModel("forty-intel", float64Ptr(40), nil, nil, 1, 100000),
 	}
 
-	best := findBestModel(models, role, map[string]int{}, map[string]string{})
+	best := findBestModel(models, role, map[string]int{}, map[string]string{}, nil)
 	if best == nil || best.model.OCID != "null-intel" {
 		t.Fatalf("expected null-intelligence (50.0 fallback) to win the tiebreak, got %+v", best)
+	}
+}
+
+// --- Phase 4 (PR2a): plans, quota, frequency unit tests ---
+
+// TestFindBestModel_QuotaCurrencyRanksHighQuotaAboveLowQuotaWinner locks in
+// design Decision 2/3's exact P/C worked example: at frequency: high, C
+// (cheap-abundant) wins; at frequency: low, the SAME two candidates invert
+// so P (premium) wins. This inversion is the load-bearing proof that the
+// saturation cap (H_sat=200) makes frequency actually reorder candidates
+// (weighted-scoring spec, "quota currency ranks high-quota cheap model
+// above low-quota premium model"; plan-quota-currency spec, "Higher
+// frequency weight favors quota-abundant models").
+func TestFindBestModel_QuotaCurrencyRanksHighQuotaAboveLowQuotaWinner(t *testing.T) {
+	plansTable := &plans.Table{
+		Plan:       "test",
+		MeasuredAt: "2026-01-01",
+		Models:     map[string]int{"cand-p": 110, "cand-c": 45300},
+	}
+	p := mkModel("cand-p", float64Ptr(80), nil, nil, 3.00, 200000)
+	c := mkModel("cand-c", float64Ptr(50), nil, nil, 0.15, 200000)
+
+	t.Run("frequency: high -> C wins (cheap-abundant beats premium low-quota)", func(t *testing.T) {
+		role := profile.Role{
+			ID:        "r",
+			Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
+			Selection: &profile.Selection{Objective: profile.ObjectiveValue, Currency: profile.CurrencyQuota},
+			Frequency: profile.FrequencyHigh,
+		}
+		best := findBestModel([]EnrichedModel{p, c}, role, map[string]int{}, map[string]string{}, plansTable)
+		if best == nil {
+			t.Fatal("expected a candidate")
+		}
+		if best.model.OCID != "cand-c" {
+			t.Errorf("winner = %s, want cand-c (score ~50.00 vs cand-p ~11.00 at frequency: high)", best.model.OCID)
+		}
+	})
+
+	t.Run("frequency: low -> P wins, inverting the high-frequency winner", func(t *testing.T) {
+		role := profile.Role{
+			ID:        "r",
+			Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
+			Selection: &profile.Selection{Objective: profile.ObjectiveValue, Currency: profile.CurrencyQuota},
+			Frequency: profile.FrequencyLow,
+		}
+		best := findBestModel([]EnrichedModel{p, c}, role, map[string]int{}, map[string]string{}, plansTable)
+		if best == nil {
+			t.Fatal("expected a candidate")
+		}
+		if best.model.OCID != "cand-p" {
+			t.Errorf("winner = %s, want cand-p (score 80.00 vs cand-c 50.00 at frequency: low)", best.model.OCID)
+		}
+	})
+}
+
+// TestCollectCandidates_QuotaUntabulatedFallbackUsesPriceOverPMinBridge
+// locks in plan-quota-currency spec's "Untabulated model still receives a
+// comparable rank" scenario: P_min=2.0 over the constraint-filtered set,
+// untabulated candidate priced 4.0 -> denominator = 4.0/2.0 = 2.0, not the
+// raw usd price.
+func TestCollectCandidates_QuotaUntabulatedFallbackUsesPriceOverPMinBridge(t *testing.T) {
+	role := profile.Role{
+		ID:        "r",
+		Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection: &profile.Selection{Objective: profile.ObjectiveValue, Currency: profile.CurrencyQuota},
+	}
+	plansTable := &plans.Table{Plan: "test", MeasuredAt: "2026-01-01", Models: map[string]int{}}
+	cheapest := mkModel("cheapest", float64Ptr(40), nil, nil, 2.0, 200000) // P_min = 2.0
+	untabulated := mkModel("untabulated", float64Ptr(65), nil, nil, 4.0, 200000)
+
+	candidates := collectCandidates([]EnrichedModel{cheapest, untabulated}, role, map[string]int{}, 2, map[string]string{}, plansTable)
+
+	byID := make(map[string]scoredModel, len(candidates))
+	for _, c := range candidates {
+		byID[c.model.OCID] = c
+	}
+
+	u, ok := byID["untabulated"]
+	if !ok {
+		t.Fatal("expected untabulated candidate to be present, not excluded")
+	}
+	if u.hasQuota {
+		t.Error("expected hasQuota=false for a candidate absent from the quota table")
+	}
+	if u.quota != 2.0 {
+		t.Errorf("untabulated denominator = %v, want 2.0 (price 4.0 / P_min 2.0)", u.quota)
+	}
+}
+
+// TestFindBestModel_FrequencyHasNoEffectUnderUSDCurrency locks in
+// role-profiles spec's "Frequency ignored under usd currency" scenario:
+// changing frequency must not change the winner (or anything) when the
+// effective currency is usd.
+func TestFindBestModel_FrequencyHasNoEffectUnderUSDCurrency(t *testing.T) {
+	a := mkModel("model-a", float64Ptr(72.5), nil, nil, 30, 200000)
+	b := mkModel("model-b", float64Ptr(52.1), nil, nil, 0.95, 200000)
+
+	roleHigh := profile.Role{ID: "r", Weights: map[string]float64{profile.MetricIntelligence: 1.0}, Frequency: profile.FrequencyHigh}
+	roleLow := profile.Role{ID: "r", Weights: map[string]float64{profile.MetricIntelligence: 1.0}, Frequency: profile.FrequencyLow}
+
+	bestHigh := findBestModel([]EnrichedModel{a, b}, roleHigh, map[string]int{}, map[string]string{}, nil)
+	bestLow := findBestModel([]EnrichedModel{a, b}, roleLow, map[string]int{}, map[string]string{}, nil)
+
+	if bestHigh == nil || bestLow == nil {
+		t.Fatal("expected candidates in both cases")
+	}
+	if bestHigh.model.OCID != bestLow.model.OCID {
+		t.Errorf("frequency changed the winner under usd currency: high=%s low=%s", bestHigh.model.OCID, bestLow.model.OCID)
+	}
+	if bestHigh.model.OCID != "model-b" {
+		t.Errorf("winner = %s, want model-b (raw ratio unaffected by frequency under usd)", bestHigh.model.OCID)
+	}
+}
+
+// TestBuildReason_QuotaTabulatedContainsMeasuredAt locks in
+// plan-quota-currency spec's "Quota-ranked reason carries measured_at"
+// scenario.
+func TestBuildReason_QuotaTabulatedContainsMeasuredAt(t *testing.T) {
+	role := profile.Role{
+		ID:          "r",
+		Description: "role desc",
+		Weights:     map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection:   &profile.Selection{Objective: profile.ObjectiveValue, Currency: profile.CurrencyQuota},
+	}
+	plansTable := &plans.Table{Plan: "test", MeasuredAt: "2026-08-01", Models: map[string]int{"model-a": 110}}
+	m := mkModel("model-a", float64Ptr(80), nil, nil, 3.0, 200000)
+	best := &scoredModel{model: m, qraw: 80, price: 3.0, quota: 7.27, hasQuota: true}
+
+	got := buildReason(role, best, plansTable)
+	if !strings.Contains(got, "2026-08-01") {
+		t.Errorf("buildReason() = %q, want it to contain measured_at 2026-08-01", got)
+	}
+	if !strings.Contains(got, "110 req/5h") {
+		t.Errorf("buildReason() = %q, want it to contain the requests_per_5h quota", got)
+	}
+}
+
+// TestBuildReason_QuotaFallbackOmitsMeasuredAt locks in
+// plan-quota-currency spec's "Price-fallback reason omits quota staleness
+// claim" scenario.
+func TestBuildReason_QuotaFallbackOmitsMeasuredAt(t *testing.T) {
+	role := profile.Role{
+		ID:          "r",
+		Description: "role desc",
+		Weights:     map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection:   &profile.Selection{Objective: profile.ObjectiveValue, Currency: profile.CurrencyQuota},
+	}
+	plansTable := &plans.Table{Plan: "test", MeasuredAt: "2026-08-01", Models: map[string]int{}}
+	m := mkModel("model-untabulated", float64Ptr(65), nil, nil, 4.0, 200000)
+	best := &scoredModel{model: m, qraw: 65, price: 4.0, quota: 2.0, hasQuota: false}
+
+	got := buildReason(role, best, plansTable)
+	if strings.Contains(got, "2026-08-01") {
+		t.Errorf("buildReason() = %q, must NOT contain a measured_at date for a fallback winner", got)
+	}
+	if !strings.Contains(got, "sin cuota medida") {
+		t.Errorf("buildReason() = %q, want it to explicitly mark the fallback (no measured quota)", got)
 	}
 }
 
@@ -697,7 +855,7 @@ func TestGentleAIPreset_SingleWeightBypassesNormalization(t *testing.T) {
 	role := profile.Role{ID: "orchestrator", Weights: map[string]float64{profile.MetricIntelligence: 1.0}}
 	models := []EnrichedModel{mkModel("m1", float64Ptr(72.5), nil, nil, 5, 100000)}
 
-	candidates := collectCandidates(models, role, map[string]int{}, 2, map[string]string{})
+	candidates := collectCandidates(models, role, map[string]int{}, 2, map[string]string{}, nil)
 	if len(candidates) != 1 {
 		t.Fatalf("expected 1 candidate, got %d", len(candidates))
 	}
