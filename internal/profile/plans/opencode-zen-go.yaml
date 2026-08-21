@@ -1,13 +1,115 @@
-# opencode-zen-go: embedded OpenCode Zen "Go" plan quota table.
+# opencode-zen-go: embedded OpenCode Zen "Go" plan quota curation table.
 #
-# Maps OpenCode model id (ocId) -> requests_per_5h for the Zen Go plan tier.
-# A model absent from this table falls back to the price/P_min bridge
-# (plan-quota-currency spec, Requirement: Fallback for Untabulated Models)
-# instead of failing or being excluded.
+# Maps OpenCode model id (ocId) -> curated {shape, cache_read_ratio, tier_usd,
+# multiplier}. The final requests-per-window number is NOT stored here; it is
+# derived at request time from these curated inputs plus the model's live
+# price (plan-quota-currency spec, Requirement: Embedded Quota Table).
+#
+# A model absent from this table, OR present but with no resolvable live
+# price, falls back to the price/P_min bridge (plan-quota-currency spec,
+# Requirement: Fallback for Untabulated Models) instead of failing or being
+# excluded.
+#
+# Shape = observed per-request token pattern (input/cached/output), rounded
+# as published by OpenCode. cache_read_ratio = cache-read price ÷ input
+# price, used only when the live price source does not report a cache-read
+# price directly (design D5). multiplier is omitted (defaults to 1) except
+# where OpenCode documents an explicit multiplier (Hy3: 8x).
+#
+# Prices are always the cheaper variant: off-peak hours and the lower
+# context/usage tier, never the peak or higher-tier price (design D4).
+#
+# MiniMax M2.5 (priced but no published shape) and Ox Alpha Free (no shape,
+# no price) are deliberately absent from this table (design D3) — they use
+# the untabulated price/P_min fallback bridge instead of a fabricated shape.
+#
+# Source: openspec/changes/live-quota-derivation/reference-data.md
+# (OpenCode live documentation snapshot, captured 2026-08-21).
 plan: opencode-zen-go
-measured_at: "2026-08-01"
+curated_at: "2026-08-21"
 models:
-  deepseek-v4-pro: 200
-  deepseek-v4-flash: 5000
-  kimi-k2.6: 800
-  gpt-5.5-pro: 45
+  grok-4.5:
+    shape: {input: 1100, cached: 71500, output: 220}
+    cache_read_ratio: 0.15
+    tier_usd: 15
+  gpt-5.6-luna:
+    shape: {input: 1000, cached: 50000, output: 220}
+    cache_read_ratio: 0.10
+    tier_usd: 15
+  glm-5.3:
+    shape: {input: 700, cached: 52000, output: 150}
+    cache_read_ratio: 0.185714
+    tier_usd: 15
+  glm-5.2:
+    shape: {input: 700, cached: 52000, output: 150}
+    cache_read_ratio: 0.185714
+    tier_usd: 60
+  glm-5.1:
+    shape: {input: 700, cached: 52000, output: 150}
+    cache_read_ratio: 0.185714
+    tier_usd: 60
+  kimi-k3:
+    shape: {input: 1050, cached: 76500, output: 300}
+    cache_read_ratio: 0.10
+    tier_usd: 15
+  kimi-k2.7-code:
+    shape: {input: 870, cached: 55000, output: 200}
+    cache_read_ratio: 0.2
+    tier_usd: 60
+  kimi-k2.6:
+    shape: {input: 870, cached: 55000, output: 200}
+    cache_read_ratio: 0.168421
+    tier_usd: 60
+  mimo-v2.5:
+    shape: {input: 830, cached: 71500, output: 295}
+    cache_read_ratio: 0.02
+    tier_usd: 60
+  mimo-v2.5-pro:
+    shape: {input: 790, cached: 86000, output: 305}
+    cache_read_ratio: 0.008333
+    tier_usd: 15
+  minimax-m3:
+    shape: {input: 510, cached: 56000, output: 190}
+    cache_read_ratio: 0.2
+    tier_usd: 60
+  minimax-m2.7:
+    shape: {input: 300, cached: 55000, output: 125}
+    cache_read_ratio: 0.2
+    tier_usd: 60
+  muse-spark-1.2-contributor:
+    shape: {input: 620, cached: 71400, output: 300}
+    cache_read_ratio: 0.02
+    tier_usd: 60
+  qwen3.8-max:
+    shape: {input: 420, cached: 66000, output: 200}
+    cache_read_ratio: 0.125
+    tier_usd: 15
+  qwen3.7-max:
+    shape: {input: 420, cached: 66000, output: 200}
+    cache_read_ratio: 0.2
+    tier_usd: 60
+  qwen3.7-plus:
+    shape: {input: 500, cached: 57000, output: 190}
+    cache_read_ratio: 0.1
+    tier_usd: 60
+  qwen3.6-plus:
+    shape: {input: 500, cached: 57000, output: 190}
+    cache_read_ratio: 0.1
+    tier_usd: 60
+  deepseek-v4-pro:
+    shape: {input: 750, cached: 82000, output: 290}
+    cache_read_ratio: 0.033333
+    tier_usd: 15
+  deepseek-v4-flash:
+    shape: {input: 410, cached: 71300, output: 310}
+    cache_read_ratio: 0.031818
+    tier_usd: 30
+  deepseek-v4-flash-vision-exp:
+    shape: {input: 410, cached: 71300, output: 310}
+    cache_read_ratio: 0.031818
+    tier_usd: 15
+  hy3:
+    shape: {input: 830, cached: 71500, output: 295}
+    cache_read_ratio: 0.25
+    tier_usd: 60
+    multiplier: 8

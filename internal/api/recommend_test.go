@@ -640,10 +640,18 @@ func TestFindBestModel_EmptyWeightsNullIntelligenceFallsBackTo50(t *testing.T) {
 // above low-quota premium model"; plan-quota-currency spec, "Higher
 // frequency weight favors quota-abundant models").
 func TestFindBestModel_QuotaCurrencyRanksHighQuotaAboveLowQuotaWinner(t *testing.T) {
+	// ModelPlan.Shape{Input: 1} makes cost_per_request == price/1e6, so
+	// TierUSD = wantRp5h * price / 200000 reproduces the original
+	// map[string]int{"cand-p": 110, "cand-c": 45300} derived requests/5h
+	// under each candidate's mkModel price (design: price-aware Requests
+	// replaces the old static-int schema; task 3.15).
 	plansTable := &plans.Table{
-		Plan:       "test",
-		MeasuredAt: "2026-01-01",
-		Models:     map[string]int{"cand-p": 110, "cand-c": 45300},
+		Plan:      "test",
+		CuratedAt: "2026-01-01",
+		Models: map[string]plans.ModelPlan{
+			"cand-p": {Shape: plans.Shape{Input: 1}, TierUSD: 110 * 3.00 / 200000},
+			"cand-c": {Shape: plans.Shape{Input: 1}, TierUSD: 45300 * 0.15 / 200000},
+		},
 	}
 	p := mkModel("cand-p", float64Ptr(80), nil, nil, 3.00, 200000)
 	c := mkModel("cand-c", float64Ptr(50), nil, nil, 0.15, 200000)
@@ -692,7 +700,7 @@ func TestCollectCandidates_QuotaUntabulatedFallbackUsesPriceOverPMinBridge(t *te
 		Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
 		Selection: &profile.Selection{Objective: profile.ObjectiveValue, Currency: profile.CurrencyQuota},
 	}
-	plansTable := &plans.Table{Plan: "test", MeasuredAt: "2026-01-01", Models: map[string]int{}}
+	plansTable := &plans.Table{Plan: "test", CuratedAt: "2026-01-01", Models: map[string]plans.ModelPlan{}}
 	cheapest := mkModel("cheapest", float64Ptr(40), nil, nil, 2.0, 200000) // P_min = 2.0
 	untabulated := mkModel("untabulated", float64Ptr(65), nil, nil, 4.0, 200000)
 
@@ -712,6 +720,96 @@ func TestCollectCandidates_QuotaUntabulatedFallbackUsesPriceOverPMinBridge(t *te
 	}
 	if u.quota != 2.0 {
 		t.Errorf("untabulated denominator = %v, want 2.0 (price 4.0 / P_min 2.0)", u.quota)
+	}
+}
+
+// TestPriceOf_MapsEnrichedModelPricing locks in priceOf's projection from
+// EnrichedModel.Pricing into plans.Price (design: plans never imports api;
+// Price is the seam), including the D5 nil-vs-present distinction for
+// InputCacheRead.
+func TestPriceOf_MapsEnrichedModelPricing(t *testing.T) {
+	t.Run("cache-read price present -> copied, scaled to per-1M", func(t *testing.T) {
+		m := EnrichedModel{
+			Pricing: &Money{
+				Prompt:         0.000002,
+				Completion:     0.000006,
+				InputCacheRead: float64Ptr(0.0000003),
+			},
+		}
+		got := priceOf(m)
+		if got.InputPerM != 2.0 {
+			t.Errorf("InputPerM = %v, want 2.0", got.InputPerM)
+		}
+		if got.OutputPerM != 6.0 {
+			t.Errorf("OutputPerM = %v, want 6.0", got.OutputPerM)
+		}
+		if got.CacheReadPerM == nil || *got.CacheReadPerM != 0.3 {
+			t.Errorf("CacheReadPerM = %v, want 0.3", got.CacheReadPerM)
+		}
+	})
+
+	t.Run("cache-read price absent -> nil, never a zero-as-default", func(t *testing.T) {
+		m := EnrichedModel{
+			Pricing: &Money{Prompt: 0.000002, Completion: 0.000006},
+		}
+		got := priceOf(m)
+		if got.CacheReadPerM != nil {
+			t.Errorf("CacheReadPerM = %v, want nil", got.CacheReadPerM)
+		}
+	})
+
+	t.Run("nil Pricing -> zero Price, no panic", func(t *testing.T) {
+		got := priceOf(EnrichedModel{})
+		if got.InputPerM != 0 || got.OutputPerM != 0 || got.CacheReadPerM != nil {
+			t.Errorf("priceOf(nil Pricing) = %+v, want zero Price", got)
+		}
+	})
+}
+
+// TestCollectCandidates_CuratedNilPriceExcludedNoPanic locks in design D3:
+// a candidate curated in the plans table but with a nil Pricing never
+// reaches resolveQuotaDenominators or the price/P_min fallback bridge — the
+// existing nil-price hard-constraint gate in collectCandidates excludes it
+// before any quota-currency logic runs, so it never panics and never
+// silently appears in the candidate set.
+func TestCollectCandidates_CuratedNilPriceExcludedNoPanic(t *testing.T) {
+	role := profile.Role{
+		ID:        "r",
+		Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection: &profile.Selection{Objective: profile.ObjectiveValue, Currency: profile.CurrencyQuota},
+	}
+	plansTable := &plans.Table{
+		Plan:      "test",
+		CuratedAt: "2026-01-01",
+		Models: map[string]plans.ModelPlan{
+			"muse-spark-1.2-contributor": {Shape: plans.Shape{Input: 620, Cached: 71400, Output: 300}, CacheReadRatio: 0.02, TierUSD: 60},
+		},
+	}
+	noPriceModel := EnrichedModel{
+		OCID:       "muse-spark-1.2-contributor",
+		OCName:     "muse-spark-1.2-contributor",
+		Pricing:    nil, // curated in the table, but no live price source match (design D3)
+		Benchmarks: ModelBenchmarks{Intelligence: float64Ptr(50)},
+	}
+	priced := mkModel("priced-model", float64Ptr(60), nil, nil, 3.0, 200000)
+
+	var candidates []scoredModel
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("collectCandidates panicked on a curated-but-nil-price model: %v", r)
+			}
+		}()
+		candidates = collectCandidates([]EnrichedModel{noPriceModel, priced}, role, map[string]int{}, 2, map[string]string{}, plansTable)
+	}()
+
+	for _, c := range candidates {
+		if c.model.OCID == "muse-spark-1.2-contributor" {
+			t.Fatal("expected curated-but-nil-price model to be absent from candidates, found it")
+		}
+	}
+	if len(candidates) != 1 || candidates[0].model.OCID != "priced-model" {
+		t.Fatalf("expected exactly the priced model to remain a candidate, got %+v", candidates)
 	}
 }
 
@@ -740,49 +838,230 @@ func TestFindBestModel_FrequencyHasNoEffectUnderUSDCurrency(t *testing.T) {
 	}
 }
 
-// TestBuildReason_QuotaTabulatedContainsMeasuredAt locks in
-// plan-quota-currency spec's "Quota-ranked reason carries measured_at"
-// scenario.
-func TestBuildReason_QuotaTabulatedContainsMeasuredAt(t *testing.T) {
+// TestBuildReason_QuotaTabulatedContainsCuratedDate locks in
+// plan-quota-derivation's Staleness Surfacing requirement: the reason
+// carries the table's curation date, phrased as when the shape/tier inputs
+// were curated (never as a measurement of the shown request count, since
+// that count is now derived at request time from live pricing).
+func TestBuildReason_QuotaTabulatedContainsCuratedDate(t *testing.T) {
 	role := profile.Role{
 		ID:          "r",
 		Description: "role desc",
 		Weights:     map[string]float64{profile.MetricIntelligence: 1.0},
 		Selection:   &profile.Selection{Objective: profile.ObjectiveValue, Currency: profile.CurrencyQuota},
 	}
-	plansTable := &plans.Table{Plan: "test", MeasuredAt: "2026-08-01", Models: map[string]int{"model-a": 110}}
+	// buildReason now reads best.reqPer5H directly (cached by
+	// resolveQuotaDenominators) instead of re-deriving via
+	// plansTable.Requests, so the table itself no longer needs a "model-a"
+	// entry — only CuratedAt and a non-nil table matter here (task 3.17).
+	plansTable := &plans.Table{Plan: "test", CuratedAt: "2026-08-01", Models: map[string]plans.ModelPlan{}}
 	m := mkModel("model-a", float64Ptr(80), nil, nil, 3.0, 200000)
-	best := &scoredModel{model: m, qraw: 80, price: 3.0, quota: 7.27, hasQuota: true}
+	best := &scoredModel{model: m, qraw: 80, price: 3.0, quota: 7.27, hasQuota: true, reqPer5H: 110}
 
 	got := buildReason(role, best, plansTable)
 	if !strings.Contains(got, "2026-08-01") {
-		t.Errorf("buildReason() = %q, want it to contain measured_at 2026-08-01", got)
+		t.Errorf("buildReason() = %q, want it to contain the curation date 2026-08-01", got)
 	}
 	if !strings.Contains(got, "110 req/5h") {
 		t.Errorf("buildReason() = %q, want it to contain the requests_per_5h quota", got)
 	}
+	if !strings.Contains(got, "derivado del precio actual") {
+		t.Errorf("buildReason() = %q, want it to state the quota was derived from the current price", got)
+	}
+	if strings.Contains(got, "medido") {
+		t.Errorf("buildReason() = %q, must NOT claim the request count was measured", got)
+	}
 }
 
-// TestBuildReason_QuotaFallbackOmitsMeasuredAt locks in
-// plan-quota-currency spec's "Price-fallback reason omits quota staleness
-// claim" scenario.
-func TestBuildReason_QuotaFallbackOmitsMeasuredAt(t *testing.T) {
+// TestBuildReason_QuotaFallbackOmitsCuratedDate locks in
+// plan-quota-derivation's Staleness Surfacing requirement: a price-fallback
+// winner's reason omits the curation date and any curated/measured quota
+// claim entirely.
+func TestBuildReason_QuotaFallbackOmitsCuratedDate(t *testing.T) {
 	role := profile.Role{
 		ID:          "r",
 		Description: "role desc",
 		Weights:     map[string]float64{profile.MetricIntelligence: 1.0},
 		Selection:   &profile.Selection{Objective: profile.ObjectiveValue, Currency: profile.CurrencyQuota},
 	}
-	plansTable := &plans.Table{Plan: "test", MeasuredAt: "2026-08-01", Models: map[string]int{}}
+	plansTable := &plans.Table{Plan: "test", CuratedAt: "2026-08-01", Models: map[string]plans.ModelPlan{}}
 	m := mkModel("model-untabulated", float64Ptr(65), nil, nil, 4.0, 200000)
 	best := &scoredModel{model: m, qraw: 65, price: 4.0, quota: 2.0, hasQuota: false}
 
 	got := buildReason(role, best, plansTable)
 	if strings.Contains(got, "2026-08-01") {
-		t.Errorf("buildReason() = %q, must NOT contain a measured_at date for a fallback winner", got)
+		t.Errorf("buildReason() = %q, must NOT contain a curation date for a fallback winner", got)
 	}
-	if !strings.Contains(got, "sin cuota medida") {
-		t.Errorf("buildReason() = %q, want it to explicitly mark the fallback (no measured quota)", got)
+	if !strings.Contains(got, "sin datos de cuota") {
+		t.Errorf("buildReason() = %q, want it to explicitly mark the fallback (no quota data)", got)
+	}
+	if strings.Contains(got, "medido") {
+		t.Errorf("buildReason() = %q, must NOT use \"medido\" wording", got)
+	}
+}
+
+// --- Phase 2 (live-quota-derivation): characterization tests pinning
+// resolveQuotaDenominators' current behavior against the still-static
+// map[string]int table, as a RED safety net ahead of Phase 3's price-aware
+// rewrite. These are approval tests: they describe today's reality, not a
+// new requirement, so they must PASS immediately (strict-tdd.md, "Approval
+// Testing").
+
+// TestResolveQuotaDenominators_SaturationCapAndHeadroom locks in the
+// saturating affordability formula
+// H_sat / min(requests_per_5h / frequency_weight, H_sat) directly, isolating
+// the saturation-cap boundary and the frequency-weighted threshold crossing
+// that the 5 existing indirect quota tests (via findBestModel/buildReason)
+// don't exercise in isolation.
+func TestResolveQuotaDenominators_SaturationCapAndHeadroom(t *testing.T) {
+	tests := []struct {
+		name          string
+		frequency     string
+		requestsPer5h int
+		wantQuota     float64
+	}{
+		{"saturating: requests well above H_sat cap yields quota 1", "", 300, 1.0},
+		{"exactly at H_sat boundary: cap does not engage but quota is still 1", "", 200, 1.0},
+		{"scarce: headroom below H_sat yields quota above 1", "", 50, 4.0},
+		{"high frequency weight pushes rp5h above threshold: saturates", profile.FrequencyHigh, 1000, 1.0},
+		{"high frequency weight keeps rp5h below threshold: scarce", profile.FrequencyHigh, 400, 2.0},
+		{"low frequency weight amplifies scarce headroom", profile.FrequencyLow, 40, 1.25},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ocID := "model-x"
+			// Shape{Input: 200000} against the model's price 5.0 makes
+			// cost_per_request == 200000*5.0/1e6 == 1.0 exactly, so
+			// TierUSD == requestsPer5h*5 reproduces the exact
+			// requestsPer5h value the old static-int table stored (task
+			// 2.1's schema is now price-derived, same scenario intent).
+			plansTable := &plans.Table{
+				Plan:      "test",
+				CuratedAt: "2026-01-01",
+				Models: map[string]plans.ModelPlan{
+					ocID: {Shape: plans.Shape{Input: 200000}, TierUSD: float64(tt.requestsPer5h) * 5},
+				},
+			}
+			model := mkModel(ocID, float64Ptr(70), nil, nil, 5.0, 200000)
+			role := profile.Role{ID: "r", Frequency: tt.frequency}
+			candidates := []scoredModel{{model: model, qraw: 70, price: 5.0}}
+
+			resolveQuotaDenominators(candidates, role, plansTable)
+
+			if !candidates[0].hasQuota {
+				t.Errorf("hasQuota = false, want true for a tabulated model")
+			}
+			if candidates[0].quota != tt.wantQuota {
+				t.Errorf("quota = %v, want %v", candidates[0].quota, tt.wantQuota)
+			}
+		})
+	}
+}
+
+// TestResolveQuotaDenominators_UntabulatedFallback locks in the price/P_min
+// bridge directly, over a candidate set that mixes a tabulated model with
+// two untabulated ones, proving P_min is computed once over the whole set
+// (not just the untabulated candidates).
+func TestResolveQuotaDenominators_UntabulatedFallback(t *testing.T) {
+	role := profile.Role{ID: "r"}
+	// Shape{Input: 1000000} against the model's price 1.0 makes
+	// cost_per_request == 1000000*1.0/1e6 == 1.0 exactly, so TierUSD == 500
+	// reproduces the old table's exact "tabulated-model": 100 value.
+	plansTable := &plans.Table{
+		Plan:      "test",
+		CuratedAt: "2026-01-01",
+		Models: map[string]plans.ModelPlan{
+			"tabulated-model": {Shape: plans.Shape{Input: 1000000}, TierUSD: 500},
+		},
+	}
+
+	tabulated := mkModel("tabulated-model", float64Ptr(80), nil, nil, 1.0, 200000) // cheapest -> P_min = 1.0
+	untabulatedMid := mkModel("untabulated-mid", float64Ptr(60), nil, nil, 3.0, 200000)
+	untabulatedExpensive := mkModel("untabulated-expensive", float64Ptr(50), nil, nil, 5.0, 200000)
+
+	candidates := []scoredModel{
+		{model: tabulated, qraw: 80, price: 1.0},
+		{model: untabulatedMid, qraw: 60, price: 3.0},
+		{model: untabulatedExpensive, qraw: 50, price: 5.0},
+	}
+
+	resolveQuotaDenominators(candidates, role, plansTable)
+
+	byID := make(map[string]scoredModel, len(candidates))
+	for _, c := range candidates {
+		byID[c.model.OCID] = c
+	}
+
+	if tab := byID["tabulated-model"]; !tab.hasQuota {
+		t.Error("hasQuota = false for a tabulated model, want true")
+	}
+
+	mid := byID["untabulated-mid"]
+	if mid.hasQuota {
+		t.Error("hasQuota = true for an untabulated model, want false")
+	}
+	if mid.quota != 3.0 {
+		t.Errorf("quota = %v, want 3.0 (price 3.0 / P_min 1.0)", mid.quota)
+	}
+
+	expensive := byID["untabulated-expensive"]
+	if expensive.hasQuota {
+		t.Error("hasQuota = true for an untabulated model, want false")
+	}
+	if expensive.quota != 5.0 {
+		t.Errorf("quota = %v, want 5.0 (price 5.0 / P_min 1.0)", expensive.quota)
+	}
+}
+
+// TestResolveQuotaDenominators_NilTableAllFallback locks in that a nil
+// plansTable degrades every candidate to the price/P_min fallback, without
+// consulting any table (the caller-facing contract collectCandidates
+// depends on for a role that never resolved a table).
+func TestResolveQuotaDenominators_NilTableAllFallback(t *testing.T) {
+	role := profile.Role{ID: "r"}
+	a := mkModel("model-a", float64Ptr(80), nil, nil, 2.0, 200000) // P_min = 2.0
+	b := mkModel("model-b", float64Ptr(60), nil, nil, 6.0, 200000)
+
+	candidates := []scoredModel{
+		{model: a, qraw: 80, price: 2.0},
+		{model: b, qraw: 60, price: 6.0},
+	}
+
+	resolveQuotaDenominators(candidates, role, nil)
+
+	for _, c := range candidates {
+		if c.hasQuota {
+			t.Errorf("candidate %s: hasQuota = true with a nil plansTable, want false", c.model.OCID)
+		}
+	}
+	if candidates[0].quota != 1.0 {
+		t.Errorf("candidates[0].quota = %v, want 1.0 (price 2.0 / P_min 2.0)", candidates[0].quota)
+	}
+	if candidates[1].quota != 3.0 {
+		t.Errorf("candidates[1].quota = %v, want 3.0 (price 6.0 / P_min 2.0)", candidates[1].quota)
+	}
+}
+
+// TestResolveQuotaDenominators_EmptySliceNoPanic locks in that an empty
+// candidate slice returns immediately without panicking (e.g. dividing by
+// an infinite P_min) — collectCandidates can call this with zero
+// constraint-surviving candidates.
+func TestResolveQuotaDenominators_EmptySliceNoPanic(t *testing.T) {
+	role := profile.Role{ID: "r"}
+	plansTable := &plans.Table{Plan: "test", CuratedAt: "2026-01-01", Models: map[string]plans.ModelPlan{}}
+
+	candidates := []scoredModel{}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("resolveQuotaDenominators panicked on an empty candidate slice: %v", r)
+		}
+	}()
+	resolveQuotaDenominators(candidates, role, plansTable)
+
+	if len(candidates) != 0 {
+		t.Errorf("candidates length = %d, want 0 (unchanged)", len(candidates))
 	}
 }
 
