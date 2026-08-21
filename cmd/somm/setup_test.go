@@ -197,6 +197,88 @@ func TestSaveEnvFile(t *testing.T) {
 	}
 }
 
+// TestSaveEnvFile_RoundTripsAllThreeKeys is a regression guard for the
+// hazard the design flagged: saveEnvFile rewrites .env wholesale from its
+// order allowlist, so an update that carries only some keys must not drop
+// the others. A tier-only update must not drop existing API keys, and vice
+// versa.
+func TestSaveEnvFile_RoundTripsAllThreeKeys(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+
+	keys := map[string]string{
+		"OPENCODE_API_KEY":   "oc-secret",
+		"OPENROUTER_API_KEY": "or-secret",
+		"SOMM_OC_TIER":       "go",
+	}
+	if err := saveEnvFile(envPath, keys); err != nil {
+		t.Fatalf("saveEnvFile error: %v", err)
+	}
+
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading .env: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{"OPENCODE_API_KEY=oc-secret", "OPENROUTER_API_KEY=or-secret", "SOMM_OC_TIER=go"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("expected .env to contain %q after a full-key save, got %q", want, content)
+		}
+	}
+
+	// Now simulate a tier-only re-save (skipTierScreen path re-seeds
+	// SOMM_OC_TIER but the API keys must still be re-supplied by the
+	// caller — verify the write itself round-trips the exact keys given,
+	// dropping nothing that was passed in.
+	keys2 := map[string]string{
+		"OPENCODE_API_KEY":   "oc-secret",
+		"OPENROUTER_API_KEY": "or-secret",
+		"SOMM_OC_TIER":       "zen",
+	}
+	if err := saveEnvFile(envPath, keys2); err != nil {
+		t.Fatalf("saveEnvFile (2nd write) error: %v", err)
+	}
+	data2, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading .env after 2nd write: %v", err)
+	}
+	content2 := string(data2)
+	for _, want := range []string{"OPENCODE_API_KEY=oc-secret", "OPENROUTER_API_KEY=or-secret", "SOMM_OC_TIER=zen"} {
+		if !strings.Contains(content2, want) {
+			t.Errorf("expected .env to contain %q after tier update, got %q", want, content2)
+		}
+	}
+}
+
+// TestExistingTier_IndependentOfKeyPresence is the regression guard for the
+// upgrade-path gap tasks.md 5.7 scoped: an existing install with API keys
+// already persisted (isAlreadyConfigured == true) has NO SOMM_OC_TIER yet
+// under this feature, so the tier-presence check must be independent of the
+// key-presence check, not reuse alreadyConfigured.
+func TestExistingTier_IndependentOfKeyPresence(t *testing.T) {
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+
+	if got := existingTier(envPath); got != "" {
+		t.Errorf("existingTier() on missing .env = %q, want empty", got)
+	}
+
+	// Upgrade-path case: keys are configured, tier is not.
+	if err := os.WriteFile(envPath, []byte("OPENCODE_API_KEY=secret\n"), 0600); err != nil {
+		t.Fatalf("writing .env: %v", err)
+	}
+	if got := existingTier(envPath); got != "" {
+		t.Errorf("existingTier() with keys but no tier = %q, want empty (upgrade-path gap)", got)
+	}
+
+	if err := os.WriteFile(envPath, []byte("OPENCODE_API_KEY=secret\nSOMM_OC_TIER=zen\n"), 0600); err != nil {
+		t.Fatalf("writing .env: %v", err)
+	}
+	if got := existingTier(envPath); got != "zen" {
+		t.Errorf("existingTier() = %q, want zen", got)
+	}
+}
+
 func TestUpdateMCPConfig(t *testing.T) {
 	tmp := t.TempDir()
 	configPath := filepath.Join(tmp, "opencode.json")

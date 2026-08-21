@@ -62,8 +62,10 @@ The wizard will:
 1. Check if you already have API keys configured
 2. Ask which providers you want to use (OpenCode required, OpenRouter optional)
 3. Guide you through pasting each API key
-4. Save the `.env` file and update `opencode.json`
-5. Start the server automatically
+4. Ask which OpenCode tier you're on (`go` or `zen`) — asked once, only on
+   first setup or with `--force`
+5. Save the `.env` file and update `opencode.json`
+6. Start the server automatically
 
 ### Manual setup
 
@@ -76,6 +78,7 @@ If you prefer manual configuration, see the options below.
 | `OPENCODE_API_KEY` | Yes | OpenCode Go/Zen subscription key |
 | `OPENROUTER_API_KEY` | No | OpenRouter API key for benchmarks |
 | `SOMM_PROFILE` | No | Path to a role profile YAML file (see [Role profiles](#role-profiles)) |
+| `SOMM_OC_TIER` | No | Your OpenCode subscription tier: `go` or `zen`. Captured once by the setup wizard; refines the default `selection.currency` (see [Role profiles](#role-profiles)) to `quota` for any role that doesn't set it explicitly. Unset defaults to `usd`. |
 
 ### .env file
 
@@ -84,6 +87,7 @@ Create a `.env` file next to the binary:
 ```
 OPENCODE_API_KEY=sk-your-key-here
 OPENROUTER_API_KEY=sk-or-your-key-here
+SOMM_OC_TIER=go
 ```
 
 ### Flags
@@ -124,6 +128,9 @@ roles with a YAML file like:
 version: 1
 defaults:
   min_context: 32000
+selection:
+  objective: value   # value (default) | quality | budget
+  currency: usd      # usd (default) | quota
 roles:
   - id: my-agent
     description: "needs strong coding + a context floor"
@@ -133,7 +140,29 @@ roles:
       intelligence: 0.3
     max_input_price: 5.0
     requires: ["reasoning"]
+    frequency: high    # high | medium (default) | low — read only under currency: quota
 ```
+
+#### Selection: objective and currency
+
+Every profile and role can set a `selection` block to control ranking:
+
+- `objective` picks the comparator: `value` (default, quality-per-price) picks
+  the best ratio; `quality` maximizes raw benchmark score, breaking ties on
+  price; `budget` behaves like `value` but requires an effective
+  `max_input_price` ceiling (role- or `defaults`-level) — a `budget` role with
+  no ceiling anywhere fails loud at load time.
+- `currency` picks the denominator: `usd` (default) ranks by price; `quota`
+  ranks by OpenCode plan headroom instead, using the role's `frequency`
+  (`high`/`medium`/`low`, default `medium`) to weight how much quota a role is
+  expected to consume. Models missing from the quota table are still ranked
+  (never excluded) using a price-based fallback.
+
+Both fields resolve independently, role overriding profile overriding the
+`{value, usd}` default. Setting `SOMM_OC_TIER` (`go`/`zen`) via the setup
+wizard sets the *default* `currency` to `quota` for any role that doesn't set
+`selection.currency` explicitly — an explicit `selection.currency` in your
+profile always wins over the tier.
 
 ## Usage
 

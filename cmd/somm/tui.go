@@ -35,6 +35,8 @@ const (
 	scrProviderKeyInput
 	scrConfigProgress
 	scrConfigResult
+	// scrTier is appended last so no existing constant renumbers.
+	scrTier
 )
 
 type menuAction int
@@ -143,6 +145,17 @@ type Model struct {
 	keys      map[string]string
 	keyErr    string
 
+	// tiers/tierCursor drive scrTier, the OpenCode tier (go|zen) capture
+	// screen inserted between "Key Prompts" and "Persistence". presetTier
+	// preselects the cursor with any tier already in .env; skipTierScreen
+	// skips the screen entirely when a tier is already persisted and
+	// --force was not passed (setup-wizard spec, Requirement: Tier
+	// Capture).
+	tiers          []string
+	tierCursor     int
+	presetTier     string
+	skipTierScreen bool
+
 	pendingTarget string
 	pendingSource string
 
@@ -161,6 +174,8 @@ type modelInit struct {
 	updateAvailable   bool
 	latestVersion     string
 	currentVersion    string
+	presetTier        string
+	skipTierScreen    bool
 }
 
 func newModel(init modelInit) Model {
@@ -177,6 +192,8 @@ func newModel(init modelInit) Model {
 		updateAvailable:   init.updateAvailable,
 		latestVersion:     init.latestVersion,
 		currentVersion:    init.currentVersion,
+		presetTier:        init.presetTier,
+		skipTierScreen:    init.skipTierScreen,
 		spinner:           sp,
 		updateBinaryFn:    updateBinary,
 		saveEnvFileFn:     saveEnvFile,
@@ -301,6 +318,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.updateProviders(msg)
 	case scrProviderKeyInput:
 		return m.updateProviderKeyInput(msg)
+	case scrTier:
+		return m.updateTier(msg)
 	}
 	return m, nil
 }
@@ -566,8 +585,20 @@ func (m Model) updateProviderKeyInput(msg tea.KeyMsg) (Model, tea.Cmd) {
 		cur.input.Blur()
 
 		if m.keyIdx == len(m.keyFields)-1 {
-			m.screen = scrConfigProgress
-			return m, tea.Batch(m.spinner.Tick, doSaveConfigCmd(m))
+			if m.skipTierScreen {
+				// The tier is already persisted in .env and --force was not
+				// passed: skip the screen, but re-seed the value so
+				// saveEnvFile's whole-file rewrite doesn't drop it
+				// (setup-wizard spec, Requirement: Tier Capture "not
+				// re-asked").
+				m.keys["SOMM_OC_TIER"] = m.presetTier
+				m.screen = scrConfigProgress
+				return m, tea.Batch(m.spinner.Tick, doSaveConfigCmd(m))
+			}
+			m.tiers = []string{"go", "zen"}
+			m.tierCursor = tierCursorFor(m.presetTier, m.tiers)
+			m.screen = scrTier
+			return m, nil
 		}
 		m.keyIdx++
 		m.keyFields[m.keyIdx].input.Focus()
@@ -576,6 +607,42 @@ func (m Model) updateProviderKeyInput(msg tea.KeyMsg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.keyFields[m.keyIdx].input, cmd = m.keyFields[m.keyIdx].input.Update(msg)
 	return m, cmd
+}
+
+// tierCursorFor returns the index of preset within tiers, or 0 (the first
+// option) when preset is empty or not found — the cursor default when
+// there is nothing to preselect.
+func tierCursorFor(preset string, tiers []string) int {
+	for i, t := range tiers {
+		if t == preset {
+			return i
+		}
+	}
+	return 0
+}
+
+// updateTier handles the OpenCode tier (go|zen) capture screen: up/down
+// move the cursor, enter persists the selection into m.keys and advances
+// to scrConfigProgress, esc returns to the last key field without skipping
+// the tier — D1 fixes the answer domain to go|zen, there is no "none"
+// choice (setup-wizard spec, Requirement: Tier Capture).
+func (m Model) updateTier(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "j", "down":
+		m.tierCursor = (m.tierCursor + 1) % len(m.tiers)
+	case "k", "up":
+		m.tierCursor = (m.tierCursor - 1 + len(m.tiers)) % len(m.tiers)
+	case "enter":
+		m.keys["SOMM_OC_TIER"] = m.tiers[m.tierCursor]
+		m.screen = scrConfigProgress
+		return m, tea.Batch(m.spinner.Tick, doSaveConfigCmd(m))
+	case "esc":
+		m.screen = scrProviderKeyInput
+		m.keyIdx = len(m.keyFields) - 1
+		m.keyFields[m.keyIdx].input.Focus()
+		return m, textinput.Blink
+	}
+	return m, nil
 }
 
 type updateDoneMsg struct {
@@ -654,6 +721,8 @@ func (m Model) View() string {
 		return m.viewKeyInput()
 	case scrConfigProgress:
 		return renderScreen("Configurando somm", fmt.Sprintf("%s Guardando configuración...", m.spinner.View()), "")
+	case scrTier:
+		return m.viewTier()
 	}
 	return ""
 }
@@ -714,6 +783,16 @@ func (m Model) viewKeyInput() string {
 		body += "\n\n" + errorStyle.Render(m.keyErr)
 	}
 	return renderScreen("Configurar somm", body, helpContinue)
+}
+
+func (m Model) viewTier() string {
+	var b strings.Builder
+	b.WriteString("¿Qué tier de OpenCode tenés?\n\n")
+	for i, t := range m.tiers {
+		b.WriteString(menuItem(t, i == m.tierCursor))
+		b.WriteString("\n")
+	}
+	return renderScreen("Configurar somm", b.String(), "j/k: navigate • enter: select • esc: back • q: quit")
 }
 
 func (m Model) viewStatus() string {
