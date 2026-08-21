@@ -146,6 +146,8 @@ func (c *Client) ListModels(ctx context.Context, subscription string, enrich boo
 
 	var goModels, zenModels []OCModel
 	var goErr, zenErr error
+	var discovered []DiscoveredModel
+	var discErr error
 	var wg sync.WaitGroup
 
 	if subscription == "go" || subscription == "both" {
@@ -162,6 +164,16 @@ func (c *Client) ListModels(ctx context.Context, subscription string, enrich boo
 			zenModels, zenErr = c.fetchOC(ctx, ocZenURL, "Zen")
 		}()
 	}
+	// Local `opencode` CLI discovery (design D1-D4) runs alongside the OC
+	// Go/Zen fetches in the same WaitGroup — max, not sum, of failure impact.
+	// Every discovery error is non-fatal: warn and continue with exactly
+	// today's OC Go/Zen + OpenRouter result (design D4, Requirement: Graceful
+	// Degradation).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		discovered, discErr = c.discoverer().Discover(ctx)
+	}()
 	wg.Wait()
 
 	if goErr != nil {
@@ -169,6 +181,9 @@ func (c *Client) ListModels(ctx context.Context, subscription string, enrich boo
 	}
 	if zenErr != nil {
 		slog.Error("OC Zen fetch failed", "subscription", "zen", "error", zenErr)
+	}
+	if discErr != nil {
+		slog.Warn("provider discovery failed, continuing with existing catalog", "error", discErr)
 	}
 
 	seen := make(map[string]*EnrichedModel)
@@ -205,6 +220,8 @@ func (c *Client) ListModels(ctx context.Context, subscription string, enrich boo
 		models = append(models, *m)
 	}
 
+	models = mergeDiscovered(models, discovered)
+
 	if enrich {
 		orModels, err := c.fetchOpenRouter(ctx, orURL)
 		if err == nil {
@@ -240,4 +257,109 @@ func (c *Client) ListORModels(ctx context.Context, filter string) ([]ORModel, er
 		}
 	}
 	return filtered, nil
+}
+
+// mergeKey builds the dedupe identity combining provider identity and bare
+// model slug (design D5): two providers publishing the same slug (e.g.
+// OpenAI's "gpt-5.6" reached via the CLI vs OC Go's own "gpt-5.6") are
+// genuinely different purchases at different prices and must never collide.
+func mergeKey(providerID, slug string) string {
+	return providerID + "/" + slug
+}
+
+// normalizeDiscoveredProviderID canonicalizes the CLI's opencode-family
+// providerIDs to "opencode" so a CLI-discovered OpenCode-hosted model merges
+// with (and CLI-price-overwrites) its OC Go/Zen-sourced counterpart. Every
+// other providerID (openai, kimi-for-coding, ...) passes through unchanged
+// (design D5).
+func normalizeDiscoveredProviderID(providerID string) string {
+	switch strings.ToLower(providerID) {
+	case "opencode", "opencode-go", "opencode-zen":
+		return "opencode"
+	default:
+		return providerID
+	}
+}
+
+// deriveDiscoveredProviderName renders a human-readable name for a
+// (normalized) CLI providerID. "opencode" gets the same display name used
+// elsewhere in this package; anything else is title-cased word-by-word on
+// its dash separators (design does not specify a lookup table for arbitrary
+// CLI providerIDs, unlike the OC-model-ID prefix table in provider.go).
+func deriveDiscoveredProviderName(providerID string) string {
+	if providerID == "opencode" {
+		return "OpenCode"
+	}
+	words := strings.Split(providerID, "-")
+	for i, w := range words {
+		words[i] = titleCaseFirst(w)
+	}
+	return strings.Join(words, " ")
+}
+
+// mergeDiscovered merges CLI-discovered models into models built from OC
+// Go/Zen (design Data Flow: Discoverer -> mergeDiscovered ->
+// enrichWithOpenRouter). HTTP-sourced (OC Go/Zen) entries implicitly carry
+// ProviderID "opencode" for dedupe purposes (design D5). A discovered model
+// whose mergeKey collides with an existing entry overwrites that entry's
+// pricing and sets PriceSource (design D6) instead of appending a duplicate;
+// otherwise it becomes a new entry, namespaced by provider unless its
+// (normalized) ProviderID is "opencode" (design D5's OCID rule). Called with
+// an empty/nil discovered slice, models is returned unchanged (Requirement:
+// Behavior Unchanged When Discovery Is Absent).
+func mergeDiscovered(models []EnrichedModel, discovered []DiscoveredModel) []EnrichedModel {
+	byKey := make(map[string]int, len(models))
+	for i := range models {
+		byKey[mergeKey("opencode", models[i].OCID)] = i
+	}
+
+	for _, dm := range discovered {
+		providerID := normalizeDiscoveredProviderID(dm.ProviderID)
+		providerName := deriveDiscoveredProviderName(providerID)
+		key := mergeKey(providerID, dm.ID)
+
+		pricing := &Money{
+			Prompt:     dm.InputPerM / 1e6,
+			Completion: dm.OutputPerM / 1e6,
+		}
+		if dm.CacheReadPerM != nil {
+			cacheRead := *dm.CacheReadPerM / 1e6
+			pricing.InputCacheRead = &cacheRead
+		}
+
+		if idx, ok := byKey[key]; ok {
+			m := &models[idx]
+			m.ProviderID = providerID
+			m.ProviderName = providerName
+			m.ModelSlug = dm.ID
+			m.Pricing = pricing
+			m.PriceSource = "opencode-cli"
+			if dm.ContextLength != nil {
+				m.ContextLength = dm.ContextLength
+			}
+			continue
+		}
+
+		ocid := dm.ID
+		if providerID != "opencode" {
+			ocid = providerID + "/" + dm.ID
+		}
+		name := dm.Name
+		if name == "" {
+			name = deriveDisplayName(dm.ID)
+		}
+		models = append(models, EnrichedModel{
+			OCID:          ocid,
+			OCName:        name,
+			OCProvider:    providerName,
+			ProviderID:    providerID,
+			ProviderName:  providerName,
+			ModelSlug:     dm.ID,
+			Pricing:       pricing,
+			ContextLength: dm.ContextLength,
+			PriceSource:   "opencode-cli",
+		})
+		byKey[key] = len(models) - 1
+	}
+	return models
 }

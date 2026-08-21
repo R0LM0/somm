@@ -74,9 +74,23 @@ func MatchOR(ocID string, orModels []ORModel) *ORModel {
 
 // enrichWithOpenRouter mutates the enriched models with data from OpenRouter.
 // Only matched models are updated; unmatched models keep their zero/nil values.
+//
+// Matching uses ModelSlug (the bare CLI slug) when set, not OCID, because a
+// CLI-sourced model whose provider isn't "opencode" carries a namespaced OCID
+// (e.g. "openai/gpt-5.6") that would never hit MatchOR's OC-style prefix
+// alias table (design task 4.6).
+//
+// Pricing is intentionally NOT overwritten once PriceSource is already set:
+// the CLI's first-party price wins over the OpenRouter-derived price (design
+// D6). Benchmarks, context length, and reasoning are still copied — the
+// guard applies to price precedence only, not to the rest of the enrichment.
 func enrichWithOpenRouter(enriched []EnrichedModel, orModels []ORModel) {
 	for i := range enriched {
-		match := MatchOR(enriched[i].OCID, orModels)
+		matchID := enriched[i].OCID
+		if enriched[i].ModelSlug != "" {
+			matchID = enriched[i].ModelSlug
+		}
+		match := MatchOR(matchID, orModels)
 		if match == nil {
 			continue
 		}
@@ -84,7 +98,7 @@ func enrichWithOpenRouter(enriched []EnrichedModel, orModels []ORModel) {
 		model.ORID = &match.ID
 		model.ORName = &match.Name
 
-		if match.Pricing != nil {
+		if match.Pricing != nil && model.PriceSource == "" {
 			money := &Money{
 				Prompt:     ParseMoney(match.Pricing.Prompt),
 				Completion: ParseMoney(match.Pricing.Completion),

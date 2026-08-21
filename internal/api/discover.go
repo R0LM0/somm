@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 )
 
@@ -371,4 +372,43 @@ func runOpencodeDiscover(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("opencode discovery: reading stdout: %w", readErr)
 	}
 	return stdout, nil
+}
+
+// defaultDiscoverer is the package-level execDiscoverer singleton used by
+// Client.discoverer() when Client.Discoverer is nil. Sharing one instance
+// (rather than constructing one per Client/call) lets the in-process TTL
+// cache and single-flight (design D3) apply across every ListModels call
+// made by this process, not just within one Client.
+var defaultDiscoverer ProviderDiscoverer = newExecDiscoverer()
+
+// noopDiscoverer reports zero providers and never errors. It is the resolved
+// default under `go test` (see Client.discoverer): the design's own comment
+// on Client.Discoverer says "tests inject a fake or a no-op", but this repo
+// has many existing Client{} literals across several test files (validate,
+// cost, recommend, export) built before discovery existed and that never set
+// Discoverer explicitly. Falling back to noopDiscoverer under testing.Testing
+// keeps every one of those pre-existing tests hermetic and deterministic —
+// never spawning a real subprocess or depending on this host's opencode
+// install/auth state — without having to touch every one of those files in
+// this atomic slice; tests that specifically exercise discovery (this file's
+// TestListModels_*, TestMergeDiscovered_*) inject an explicit fakeDiscoverer
+// and take precedence over this fallback.
+type noopDiscoverer struct{}
+
+func (noopDiscoverer) Discover(ctx context.Context) ([]DiscoveredModel, error) {
+	return nil, nil
+}
+
+// discoverer resolves the ProviderDiscoverer for a ListModels call: an
+// explicitly-set Client.Discoverer always wins; otherwise it is the real
+// default execDiscoverer in production, or the safe noopDiscoverer under
+// `go test` (see noopDiscoverer's doc comment).
+func (c *Client) discoverer() ProviderDiscoverer {
+	if c.Discoverer != nil {
+		return c.Discoverer
+	}
+	if testing.Testing() {
+		return noopDiscoverer{}
+	}
+	return defaultDiscoverer
 }

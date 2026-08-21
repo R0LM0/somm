@@ -569,3 +569,191 @@ func float64Ptr(f float64) *float64 {
 func int64Ptr(i int64) *int64 {
 	return &i
 }
+
+// fakeDiscoverer is a test-only ProviderDiscoverer (design: "tests inject a
+// fake or a no-op") used to drive ListModels' merge/degradation behavior
+// deterministically, without ever invoking a real subprocess.
+type fakeDiscoverer struct {
+	models []DiscoveredModel
+	err    error
+}
+
+func (f fakeDiscoverer) Discover(ctx context.Context) ([]DiscoveredModel, error) {
+	return f.models, f.err
+}
+
+func TestListModels_MergesDiscoveredModels(t *testing.T) {
+	goBody := `{"data":[{"id":"gpt-5.6","object":"model","created":1,"owned_by":"test"}]}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/zen/go/v1/models":
+			w.Write([]byte(goBody))
+		case "/zen/v1/models":
+			w.Write([]byte(`{"data":[]}`))
+		case "/api/v1/models":
+			w.Write([]byte(`{"data":[]}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := newClientWithServer(srv, "oc-key", "or-key")
+	client.Discoverer = fakeDiscoverer{models: []DiscoveredModel{
+		{ProviderID: "kimi-for-coding", ID: "kimi-k2", Name: "Kimi K2", InputPerM: 0.6, OutputPerM: 2.5},
+	}}
+
+	models, err := client.ListModels(context.Background(), "both", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("len(models) = %d, want 2 (1 OC Go + 1 discovered, distinct providers)", len(models))
+	}
+
+	var discovered *EnrichedModel
+	for i := range models {
+		if models[i].ProviderID == "kimi-for-coding" {
+			discovered = &models[i]
+		}
+	}
+	if discovered == nil {
+		t.Fatal("discovered model not found in merged catalog")
+	}
+	if discovered.ProviderName != "Kimi For Coding" {
+		t.Errorf("ProviderName = %q, want %q", discovered.ProviderName, "Kimi For Coding")
+	}
+	if discovered.ModelSlug != "kimi-k2" {
+		t.Errorf("ModelSlug = %q, want kimi-k2", discovered.ModelSlug)
+	}
+	if discovered.OCID != "kimi-for-coding/kimi-k2" {
+		t.Errorf("OCID = %q, want namespaced kimi-for-coding/kimi-k2 (ProviderID != opencode)", discovered.OCID)
+	}
+	if discovered.PriceSource != "opencode-cli" {
+		t.Errorf("PriceSource = %q, want opencode-cli", discovered.PriceSource)
+	}
+	wantPrompt, wantCompletion := 0.6/1e6, 2.5/1e6
+	if discovered.Pricing == nil || discovered.Pricing.Prompt != wantPrompt || discovered.Pricing.Completion != wantCompletion {
+		t.Errorf("Pricing = %+v, want prompt=%v completion=%v (cost.* is per-1M, converted to per-token)", discovered.Pricing, wantPrompt, wantCompletion)
+	}
+}
+
+func TestListModels_DiscoveryFailureDegradesGracefully(t *testing.T) {
+	goBody := `{"data":[{"id":"gpt-5.6","object":"model","created":1,"owned_by":"test"}]}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/zen/go/v1/models":
+			w.Write([]byte(goBody))
+		case "/zen/v1/models":
+			w.Write([]byte(`{"data":[]}`))
+		case "/api/v1/models":
+			w.Write([]byte(`{"data":[]}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := newClientWithServer(srv, "oc-key", "or-key")
+	client.Discoverer = fakeDiscoverer{err: errors.New("opencode: boom")}
+
+	models, err := client.ListModels(context.Background(), "both", false)
+	if err != nil {
+		t.Fatalf("ListModels must not fail when discovery errors (design D4): %v", err)
+	}
+	want := []EnrichedModel{
+		{OCID: "gpt-5.6", OCName: "OpenAI 5.6", OCProvider: "OpenAI", Subscription: "go"},
+	}
+	if !reflect.DeepEqual(models, want) {
+		t.Errorf("models = %#v, want %#v (today's exact result, discovery error ignored)", models, want)
+	}
+}
+
+func TestListModels_ZeroDiscoveredProvidersByteIdentical(t *testing.T) {
+	goBody := `{"data":[{"id":"go-1","object":"model","created":1,"owned_by":"test"},{"id":"shared-1","object":"model","created":3,"owned_by":"test"}]}`
+	zenBody := `{"data":[{"id":"zen-1","object":"model","created":2,"owned_by":"test"},{"id":"shared-1","object":"model","created":3,"owned_by":"test"}]}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/zen/go/v1/models":
+			w.Write([]byte(goBody))
+		case "/zen/v1/models":
+			w.Write([]byte(zenBody))
+		case "/api/v1/models":
+			w.Write([]byte(`{"data":[]}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := newClientWithServer(srv, "oc-key", "or-key")
+	client.Discoverer = fakeDiscoverer{} // zero providers discovered
+
+	models, err := client.ListModels(context.Background(), "both", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []EnrichedModel{
+		{OCID: "go-1", OCName: "Go 1", OCProvider: "Go", Subscription: "go"},
+		{OCID: "shared-1", OCName: "Shared 1", OCProvider: "Shared", Subscription: "both"},
+		{OCID: "zen-1", OCName: "Zen 1", OCProvider: "Zen", Subscription: "zen"},
+	}
+	sortEnrichedByID(models)
+	if !reflect.DeepEqual(models, want) {
+		t.Errorf("models = %#v, want %#v (byte-identical to pre-change behavior)", models, want)
+	}
+}
+
+func TestMergeDiscovered_DedupeKeyIsProviderIDPlusSlug(t *testing.T) {
+	base := []EnrichedModel{
+		{OCID: "gpt-5.6", OCName: "OpenAI 5.6", OCProvider: "OpenAI", Subscription: "go"},
+	}
+	discovered := []DiscoveredModel{
+		// opencode-go normalizes to "opencode" (D5) -> same mergeKey as the OC
+		// Go entry above ("opencode/gpt-5.6") -> merges in place, CLI price wins.
+		{ProviderID: "opencode-go", ID: "gpt-5.6", Name: "GPT 5.6", InputPerM: 2, OutputPerM: 10},
+		// A different provider selling the same bare slug is a genuinely
+		// different purchase at a different price (D5) -> must NOT collide.
+		{ProviderID: "openai", ID: "gpt-5.6", Name: "GPT 5.6", InputPerM: 3, OutputPerM: 15},
+	}
+
+	got := mergeDiscovered(base, discovered)
+
+	if len(got) != 2 {
+		t.Fatalf("len(got) = %d, want 2 (merged OC entry + distinct openai entry)", len(got))
+	}
+
+	var mergedOC, newOpenAI *EnrichedModel
+	for i := range got {
+		switch got[i].ProviderID {
+		case "opencode":
+			mergedOC = &got[i]
+		case "openai":
+			newOpenAI = &got[i]
+		}
+	}
+	if mergedOC == nil {
+		t.Fatal("expected the OC Go entry to be merged in place (ProviderID normalized to opencode)")
+	}
+	if mergedOC.OCID != "gpt-5.6" {
+		t.Errorf("mergedOC.OCID = %q, want unchanged gpt-5.6 (bare slug, ProviderID==opencode)", mergedOC.OCID)
+	}
+	wantPrompt := 2.0 / 1e6
+	if mergedOC.PriceSource != "opencode-cli" || mergedOC.Pricing == nil || mergedOC.Pricing.Prompt != wantPrompt {
+		t.Errorf("mergedOC = priceSource=%q pricing=%+v, want opencode-cli / prompt=%v", mergedOC.PriceSource, mergedOC.Pricing, wantPrompt)
+	}
+
+	if newOpenAI == nil {
+		t.Fatal("expected a distinct new entry for providerID=openai (D5: different purchase must not collide with OC Go)")
+	}
+	if newOpenAI.OCID != "openai/gpt-5.6" {
+		t.Errorf("newOpenAI.OCID = %q, want namespaced openai/gpt-5.6", newOpenAI.OCID)
+	}
+	wantOpenAIPrompt := 3.0 / 1e6
+	if newOpenAI.Pricing == nil || newOpenAI.Pricing.Prompt != wantOpenAIPrompt {
+		t.Errorf("newOpenAI.Pricing = %+v, want prompt=%v", newOpenAI.Pricing, wantOpenAIPrompt)
+	}
+}

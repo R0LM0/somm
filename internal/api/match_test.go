@@ -485,6 +485,63 @@ func TestEnrichWithOpenRouter_CopiesInputCacheRead(t *testing.T) {
 	}
 }
 
+func TestEnrichWithOpenRouter_SkipsPricingWhenPriceSourceSet(t *testing.T) {
+	models := []EnrichedModel{
+		{
+			OCID:        "openai/gpt-5.6",
+			OCName:      "OpenAI 5.6",
+			OCProvider:  "OpenAI",
+			ModelSlug:   "gpt-5.6",
+			PriceSource: "opencode-cli",
+			Pricing:     &Money{Prompt: 2.0 / 1e6, Completion: 10.0 / 1e6},
+		},
+	}
+	orModels := []ORModel{
+		{
+			ID:      "openai/gpt-5.6",
+			Name:    "GPT-5.6",
+			Pricing: &Pricing{Prompt: "0.000003", Completion: "0.000015"},
+			Benchmarks: &Benchmarks{ArtificialAnalysis: &ArtificialAnalysis{
+				IntelligenceIndex: ptr(90.0),
+			}},
+			ContextLength: ptr(int64(200000)),
+		},
+	}
+
+	enrichWithOpenRouter(models, orModels)
+
+	got := models[0]
+	wantPrompt, wantCompletion := 2.0/1e6, 10.0/1e6
+	if got.Pricing == nil || got.Pricing.Prompt != wantPrompt || got.Pricing.Completion != wantCompletion {
+		t.Errorf("Pricing = %+v, want unchanged CLI price (prompt=%v completion=%v) — D6 guard", got.Pricing, wantPrompt, wantCompletion)
+	}
+	if got.ORID == nil || *got.ORID != "openai/gpt-5.6" {
+		t.Errorf("ORID = %v, want openai/gpt-5.6 (matched via bare ModelSlug, not namespaced OCID)", got.ORID)
+	}
+	if got.ContextLength == nil || *got.ContextLength != 200000 {
+		t.Errorf("ContextLength = %v, want 200000 (still copied from OpenRouter despite price guard)", got.ContextLength)
+	}
+	if got.Benchmarks.Intelligence == nil || *got.Benchmarks.Intelligence != 90.0 {
+		t.Errorf("Benchmarks.Intelligence = %v, want 90.0 (still copied from OpenRouter despite price guard)", got.Benchmarks.Intelligence)
+	}
+}
+
+func TestEnrichWithOpenRouter_StillOverwritesPricingWhenNoPriceSource(t *testing.T) {
+	models := []EnrichedModel{
+		{OCID: "openai/gpt-4", OCName: "GPT-4", OCProvider: "OpenAI", Subscription: "go"},
+	}
+	orModels := []ORModel{
+		{ID: "openai/gpt-4", Name: "GPT-4", Pricing: &Pricing{Prompt: "0.00001", Completion: "0.00003"}},
+	}
+
+	enrichWithOpenRouter(models, orModels)
+
+	got := models[0]
+	if got.Pricing == nil || got.Pricing.Prompt != 0.00001 || got.Pricing.Completion != 0.00003 {
+		t.Errorf("Pricing = %+v, want OpenRouter price 0.00001/0.00003 (regression lock: no PriceSource means enrichment still overwrites)", got.Pricing)
+	}
+}
+
 func TestParseMoney(t *testing.T) {
 	tests := []struct {
 		name string

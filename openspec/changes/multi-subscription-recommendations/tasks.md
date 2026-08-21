@@ -86,20 +86,20 @@ not code correctness.
 
 ## Phase 4: Merge + Price-Source Guard (PR 4 — depends on Phase 2/A; ATOMIC, D6)
 
-- [ ] 4.1 `internal/api/models.go`: add `ProviderID`, `ProviderName`, `ModelSlug`, `PriceSource string` (all `omitempty`) to `EnrichedModel`; add `Discoverer ProviderDiscoverer` to `Client` (nil = default `execDiscoverer`).
-- [ ] 4.2 `internal/api/api.go` `ListModels`: add Discoverer call to the existing `WaitGroup` alongside `fetchOC(go)`/`fetchOC(zen)` (max, not sum); error -> `slog.Warn`, continue (D4, mirrors `fetchOpenRouter` warn arm).
-- [ ] 4.3 `api.go`: implement `mergeKey(providerID, slug string) string = providerID + "/" + slug` (D5).
-- [ ] 4.4 `api.go`: implement `mergeDiscovered` — normalize CLI providers `opencode`/`opencode-go`/`opencode-zen` -> `"opencode"`; `OCID` stays the bare slug only when `ProviderID=="opencode"`, else namespaced `providerID/slug`; `ModelSlug` always the bare slug; convert `cost.*`/1e6 into `Pricing` (`Money`), set `PriceSource: "opencode-cli"` (D6, D7).
-- [ ] 4.5 `internal/api/match.go` `enrichWithOpenRouter`: skip the `Pricing` overwrite when `model.PriceSource != ""`, but still copy `Benchmarks`/`ContextLength`/`Reasoning` (D6 — the exact guard this slice cannot ship without).
-- [ ] 4.6 `match.go`/`MatchOR` callers: match CLI-sourced models by `ModelSlug` (bare), not the namespaced `OCID`, so OpenRouter alias matching still resolves.
-- [ ] 4.7 [RED] `api_test.go` `TestListModels_MergesDiscoveredModels` — fakeDiscoverer models merge alongside OC Go/Zen.
-- [ ] 4.8 [RED] `TestListModels_DiscoveryFailureDegradesGracefully` — fakeDiscoverer error -> output unchanged.
-- [ ] 4.9 [RED] `TestListModels_ZeroDiscoveredProvidersByteIdentical` — empty discovery -> pre-change golden.
-- [ ] 4.10 [RED] `TestMergeDiscovered_DedupeKeyIsProviderIDPlusSlug` — same slug, different providerID stay distinct (`openai/gpt-5.6` vs OC Go's `gpt-5.6`).
-- [ ] 4.11 [RED] `match_test.go` `TestEnrichWithOpenRouter_SkipsPricingWhenPriceSourceSet` — CLI price untouched, benchmarks/context/reasoning still copied (D6 — MUST land with 4.5 in the same commit).
-- [ ] 4.12 [RED] `TestEnrichWithOpenRouter_StillOverwritesPricingWhenNoPriceSource` — pre-existing OC/OR-only path regression lock.
-- [ ] 4.13 [GREEN] implement until 4.7-4.12 pass; `go test ./internal/api/... -run 'TestListModels|TestMergeDiscovered|TestEnrichWithOpenRouter' -v`.
-- [ ] 4.14 `go build ./...` — confirm `api.go` + `match.go` land in one commit (merge without the guard is a wrong price, not an incomplete feature).
+- [x] 4.1 `internal/api/models.go`: add `ProviderID`, `ProviderName`, `ModelSlug`, `PriceSource string` (all `omitempty`) to `EnrichedModel`; add `Discoverer ProviderDiscoverer` to `Client` (nil = default `execDiscoverer`).
+- [x] 4.2 `internal/api/api.go` `ListModels`: add Discoverer call to the existing `WaitGroup` alongside `fetchOC(go)`/`fetchOC(zen)` (max, not sum); error -> `slog.Warn`, continue (D4, mirrors `fetchOpenRouter` warn arm).
+- [x] 4.3 `api.go`: implement `mergeKey(providerID, slug string) string = providerID + "/" + slug` (D5).
+- [x] 4.4 `api.go`: implement `mergeDiscovered` — normalize CLI providers `opencode`/`opencode-go`/`opencode-zen` -> `"opencode"`; `OCID` stays the bare slug only when `ProviderID=="opencode"`, else namespaced `providerID/slug`; `ModelSlug` always the bare slug; convert `cost.*`/1e6 into `Pricing` (`Money`), set `PriceSource: "opencode-cli"` (D6, D7).
+- [x] 4.5 `internal/api/match.go` `enrichWithOpenRouter`: skip the `Pricing` overwrite when `model.PriceSource != ""`, but still copy `Benchmarks`/`ContextLength`/`Reasoning` (D6 — the exact guard this slice cannot ship without).
+- [x] 4.6 `match.go`/`MatchOR` callers: match CLI-sourced models by `ModelSlug` (bare), not the namespaced `OCID`, so OpenRouter alias matching still resolves.
+- [x] 4.7 [RED] `api_test.go` `TestListModels_MergesDiscoveredModels` — fakeDiscoverer models merge alongside OC Go/Zen.
+- [x] 4.8 [RED] `TestListModels_DiscoveryFailureDegradesGracefully` — fakeDiscoverer error -> output unchanged.
+- [x] 4.9 [RED] `TestListModels_ZeroDiscoveredProvidersByteIdentical` — empty discovery -> pre-change golden.
+- [x] 4.10 [RED] `TestMergeDiscovered_DedupeKeyIsProviderIDPlusSlug` — same slug, different providerID stay distinct (`openai/gpt-5.6` vs OC Go's `gpt-5.6`).
+- [x] 4.11 [RED] `match_test.go` `TestEnrichWithOpenRouter_SkipsPricingWhenPriceSourceSet` — CLI price untouched, benchmarks/context/reasoning still copied (D6 — MUST land with 4.5 in the same commit).
+- [x] 4.12 [RED] `TestEnrichWithOpenRouter_StillOverwritesPricingWhenNoPriceSource` — pre-existing OC/OR-only path regression lock.
+- [x] 4.13 [GREEN] implement until 4.7-4.12 pass; `go test ./internal/api/... -run 'TestListModels|TestMergeDiscovered|TestEnrichWithOpenRouter' -v`.
+- [x] 4.14 `go build ./...` — confirm `api.go` + `match.go` land in one commit (merge without the guard is a wrong price, not an incomplete feature).
 
 ## Phase 5: Pre-Filter + Reasons + Formatter (PR 5 — depends on Phase 1/D + Phase 4/C; ATOMIC, D10/D11)
 
