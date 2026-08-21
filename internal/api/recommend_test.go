@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/R0LM0/somm/v2/internal/profile"
@@ -286,6 +287,180 @@ func TestFindBestModel_RawRatioOrdering(t *testing.T) {
 	}
 	if best.model.OCID != "model-b" {
 		t.Errorf("winner = %s, want model-b (raw ratio: A=2.417, B=54.8)", best.model.OCID)
+	}
+}
+
+// TestFindBestModel_DefaultObjectiveMatchesValueRanking is an approval test
+// (strict-tdd refactoring pattern) locking in current findBestModel
+// behavior before the objective switch is introduced (design Decision 1 &
+// 4, task 1.5): a role with no Selection resolved (nil, as when a Role is
+// hand-built without going through profile.Load) MUST rank exactly like
+// the pre-refactor "value" objective — same worked example as
+// TestFindBestModel_RawRatioOrdering.
+func TestFindBestModel_DefaultObjectiveMatchesValueRanking(t *testing.T) {
+	role := profile.Role{ID: "r", Weights: map[string]float64{profile.MetricIntelligence: 1.0}}
+	if role.Selection != nil {
+		t.Fatal("test setup invariant broken: role.Selection must be nil here")
+	}
+	a := mkModel("model-a", float64Ptr(72.5), nil, nil, 30, 200000)
+	b := mkModel("model-b", float64Ptr(52.1), nil, nil, 0.95, 200000)
+
+	best := findBestModel([]EnrichedModel{a, b}, role, map[string]int{}, map[string]string{})
+	if best == nil {
+		t.Fatal("expected a candidate")
+	}
+	if best.model.OCID != "model-b" {
+		t.Errorf("winner = %s, want model-b (raw ratio: A=2.417, B=54.8), unchanged from pre-refactor behavior", best.model.OCID)
+	}
+}
+
+// TestFindBestModel_QualityObjectivePicksTopQraw locks in the
+// weighted-scoring spec scenario "quality objective picks top-Qraw
+// candidate over better ratio" (design Decision 4's worked example).
+func TestFindBestModel_QualityObjectivePicksTopQraw(t *testing.T) {
+	role := profile.Role{
+		ID:        "r",
+		Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection: &profile.Selection{Objective: profile.ObjectiveQuality, Currency: profile.CurrencyUSD},
+	}
+	a := mkModel("model-a", float64Ptr(90), nil, nil, 50, 200000) // Qraw=90, price=50
+	b := mkModel("model-b", float64Ptr(80), nil, nil, 5, 200000)  // Qraw=80, price=5 (better ratio)
+
+	best := findBestModel([]EnrichedModel{a, b}, role, map[string]int{}, map[string]string{})
+	if best == nil {
+		t.Fatal("expected a candidate")
+	}
+	if best.model.OCID != "model-a" {
+		t.Errorf("winner = %s, want model-a (top Qraw=90 despite worse ratio)", best.model.OCID)
+	}
+}
+
+// TestFindBestModel_QualityObjectiveTiesBrokenByLowerPrice locks in the
+// weighted-scoring spec scenario "quality objective ties broken by lower
+// denominator".
+func TestFindBestModel_QualityObjectiveTiesBrokenByLowerPrice(t *testing.T) {
+	role := profile.Role{
+		ID:        "r",
+		Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection: &profile.Selection{Objective: profile.ObjectiveQuality, Currency: profile.CurrencyUSD},
+	}
+	cheap := mkModel("cheap", float64Ptr(70), nil, nil, 2, 200000)
+	pricey := mkModel("pricey", float64Ptr(70), nil, nil, 20, 200000)
+
+	best := findBestModel([]EnrichedModel{pricey, cheap}, role, map[string]int{}, map[string]string{})
+	if best == nil {
+		t.Fatal("expected a candidate")
+	}
+	if best.model.OCID != "cheap" {
+		t.Errorf("winner = %s, want cheap (equal Qraw=70, tie broken by lower price)", best.model.OCID)
+	}
+}
+
+// TestFindBestModel_QualityObjectiveOCIDTiebreakForFullTie proves the total
+// order design Decision 4 requires: when Qraw AND price both tie,
+// sort.Slice (unstable) would otherwise make the winner nondeterministic —
+// the OCID ascending tiebreak fixes it.
+func TestFindBestModel_QualityObjectiveOCIDTiebreakForFullTie(t *testing.T) {
+	role := profile.Role{
+		ID:        "r",
+		Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection: &profile.Selection{Objective: profile.ObjectiveQuality, Currency: profile.CurrencyUSD},
+	}
+	zModel := mkModel("z-model", float64Ptr(70), nil, nil, 5, 200000)
+	aModel := mkModel("a-model", float64Ptr(70), nil, nil, 5, 200000)
+
+	best := findBestModel([]EnrichedModel{zModel, aModel}, role, map[string]int{}, map[string]string{})
+	if best == nil {
+		t.Fatal("expected a candidate")
+	}
+	if best.model.OCID != "a-model" {
+		t.Errorf("winner = %s, want a-model (fully tied on Qraw and price, lower OCID wins deterministically)", best.model.OCID)
+	}
+}
+
+// TestFindBestModel_BudgetObjectiveNeverExceedsCeiling locks in the
+// weighted-scoring spec scenario "budget objective never exceeds
+// max_input_price": the best-ratio candidate above the ceiling MUST be
+// excluded, and the winner MUST be the best value-ranked candidate at or
+// below it.
+func TestFindBestModel_BudgetObjectiveNeverExceedsCeiling(t *testing.T) {
+	ceiling := 5.0
+	role := profile.Role{
+		ID:            "r",
+		Weights:       map[string]float64{profile.MetricIntelligence: 1.0},
+		MaxInputPrice: &ceiling,
+		Selection:     &profile.Selection{Objective: profile.ObjectiveBudget, Currency: profile.CurrencyUSD},
+	}
+	// Best Qraw/price ratio (80/1=80) but above the 5.0 ceiling.
+	aboveCeiling := mkModel("above-ceiling", float64Ptr(80), nil, nil, 8, 200000)
+	// Worse ratio (60/4=15) but at/below the ceiling — must win under budget.
+	withinCeiling := mkModel("within-ceiling", float64Ptr(60), nil, nil, 4, 200000)
+
+	best := findBestModel([]EnrichedModel{aboveCeiling, withinCeiling}, role, map[string]int{}, map[string]string{})
+	if best == nil {
+		t.Fatal("expected a candidate")
+	}
+	if best.model.OCID != "within-ceiling" {
+		t.Errorf("winner = %s, want within-ceiling (above-ceiling candidate must be excluded despite the better ratio)", best.model.OCID)
+	}
+}
+
+// TestBuildReason_ValueObjectiveUnchanged is an approval test locking in
+// the exact pre-refactor Reason format for the "value" objective (design
+// Decision 6: this arm must stay byte-identical).
+func TestBuildReason_ValueObjectiveUnchanged(t *testing.T) {
+	role := profile.Role{ID: "r", Description: "role desc", Weights: map[string]float64{profile.MetricIntelligence: 1.0}}
+	m := mkModel("model-a", float64Ptr(72.5), nil, nil, 30, 200000)
+	best := &scoredModel{model: m, qraw: 72.5, price: 30}
+
+	got := buildReason(role, best)
+	want := "Mejor relación calidad/precio: 72.5 intelligence, $30.000/M input, 200K ctx (Go + Zen) — role desc"
+	if got != want {
+		t.Errorf("buildReason() = %q, want %q", got, want)
+	}
+}
+
+// TestBuildReason_QualityObjective locks in design Decision 6's quality+usd
+// Reason arm.
+func TestBuildReason_QualityObjective(t *testing.T) {
+	role := profile.Role{
+		ID:          "r",
+		Description: "role desc",
+		Weights:     map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection:   &profile.Selection{Objective: profile.ObjectiveQuality, Currency: profile.CurrencyUSD},
+	}
+	m := mkModel("model-a", float64Ptr(90), nil, nil, 50, 200000)
+	best := &scoredModel{model: m, qraw: 90, price: 50}
+
+	got := buildReason(role, best)
+	if !strings.Contains(got, "Máxima calidad disponible") {
+		t.Errorf("buildReason() = %q, want it to start with the quality-objective prefix", got)
+	}
+	if !strings.Contains(got, "90.0 intelligence") || !strings.Contains(got, "$50.000/M input") {
+		t.Errorf("buildReason() = %q, want it to interpolate metric and price", got)
+	}
+}
+
+// TestBuildReason_BudgetObjective locks in design Decision 6's budget+usd
+// Reason arm, including the effective ceiling in the text.
+func TestBuildReason_BudgetObjective(t *testing.T) {
+	ceiling := 5.0
+	role := profile.Role{
+		ID:            "r",
+		Description:   "role desc",
+		Weights:       map[string]float64{profile.MetricIntelligence: 1.0},
+		MaxInputPrice: &ceiling,
+		Selection:     &profile.Selection{Objective: profile.ObjectiveBudget, Currency: profile.CurrencyUSD},
+	}
+	m := mkModel("model-a", float64Ptr(60), nil, nil, 4, 200000)
+	best := &scoredModel{model: m, qraw: 60, price: 4}
+
+	got := buildReason(role, best)
+	if !strings.Contains(got, "$5.00/M") {
+		t.Errorf("buildReason() = %q, want it to contain the effective ceiling $5.00/M", got)
+	}
+	if !strings.Contains(got, "60.0 intelligence") || !strings.Contains(got, "$4.000/M input") {
+		t.Errorf("buildReason() = %q, want it to interpolate metric and price", got)
 	}
 }
 

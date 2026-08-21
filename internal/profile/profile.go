@@ -21,12 +21,49 @@ var validMetrics = map[string]bool{
 	MetricAgentic:      true,
 }
 
+// Objective and currency values accepted in a Selection block.
+const (
+	ObjectiveValue   = "value"
+	ObjectiveQuality = "quality"
+	ObjectiveBudget  = "budget"
+
+	CurrencyUSD   = "usd"
+	CurrencyQuota = "quota"
+)
+
+// validObjectives is the set of objective values accepted in a Selection
+// block.
+var validObjectives = map[string]bool{
+	ObjectiveValue:   true,
+	ObjectiveQuality: true,
+	ObjectiveBudget:  true,
+}
+
+// validCurrencies is the set of currency values accepted in a Selection
+// block.
+var validCurrencies = map[string]bool{
+	CurrencyUSD:   true,
+	CurrencyQuota: true,
+}
+
+// Selection controls which comparator ranks candidates (Objective) and
+// which denominator the comparator divides by (Currency). Both fields are
+// independent and resolve at load time: an absent block, or an absent
+// field within a present block, resolves to {value, usd} through profile
+// then role-level inheritance (see Requirement: Selection Block Schema,
+// Requirement: Per-Role Selection Override).
+type Selection struct {
+	Objective string `yaml:"objective,omitempty"` // value | quality | budget
+	Currency  string `yaml:"currency,omitempty"`  // usd | quota
+}
+
 // Profile is the top-level YAML document describing the active set of
 // agent roles and their scoring/constraint configuration.
 type Profile struct {
-	Version  int      `yaml:"version"`
-	Defaults Defaults `yaml:"defaults"`
-	Roles    []Role   `yaml:"roles"`
+	Version   int        `yaml:"version"`
+	Defaults  Defaults   `yaml:"defaults"`
+	Selection *Selection `yaml:"selection,omitempty"`
+	Roles     []Role     `yaml:"roles"`
 }
 
 // Defaults holds hard-constraint values inherited by any role that leaves
@@ -49,4 +86,13 @@ type Role struct {
 	MaxInputPrice   *float64           `yaml:"max_input_price,omitempty"`
 	Requires        []string           `yaml:"requires,omitempty"`
 	ExcludeFamilyOf string             `yaml:"exclude_family_of,omitempty"`
+	// Selection is a role-level override of the profile-level Selection
+	// block (yaml input). After Load, it is overwritten with the fully
+	// resolved, non-nil effective selection for this role (role -> profile
+	// -> {value, usd}) — see Requirement: Per-Role Selection Override.
+	Selection *Selection `yaml:"selection,omitempty"`
+	// currencyExplicit records whether the resolved Currency came from an
+	// explicit role- or profile-level selection.currency, as opposed to the
+	// {value, usd} fallback. Unexported: not YAML input, set during merge.
+	currencyExplicit bool
 }

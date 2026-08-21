@@ -185,9 +185,46 @@ func findBestModel(models []EnrichedModel, role profile.Role, used map[string]in
 	// It never feeds the ratio below (design Decision 1 & 2).
 	computeNormalized(role, candidates)
 
-	// Quality/price ratio ALWAYS uses the raw weighted sum, never a
-	// normalized value — normalize-then-ratio reorders winners (design
-	// Decision 1).
+	// The comparator is selected per the role's effective objective
+	// (weighted-scoring spec, Requirement: Objective-Selected Comparator;
+	// design Decision 4).
+	switch objective(role) {
+	case profile.ObjectiveQuality:
+		sortByQuality(candidates)
+	case profile.ObjectiveBudget:
+		// "budget" reuses the "value" comparator over the set already
+		// restricted to max_input_price by collectCandidates' existing
+		// hard-constraint pre-filter — no new filter code (design
+		// Decision 4; role-profiles spec, Requirement: Budget Objective
+		// Requires an Effective Ceiling guarantees this ceiling always
+		// exists whenever the effective objective is "budget").
+		sortByValue(candidates)
+	default: // profile.ObjectiveValue, and the fallback for a nil Selection
+		// (a Role built directly, e.g. in tests, without going through
+		// profile.Load's merge pass).
+		sortByValue(candidates)
+	}
+
+	return &candidates[0]
+}
+
+// objective returns the role's effective ranking objective, defaulting to
+// "value" when Selection is unset. This keeps findBestModel safe for Role
+// values built directly (not run through profile.Load's merge pass) and
+// matches design Decision 1: an absent selection block always resolves to
+// the value objective.
+func objective(role profile.Role) string {
+	if role.Selection == nil || role.Selection.Objective == "" {
+		return profile.ObjectiveValue
+	}
+	return role.Selection.Objective
+}
+
+// sortByValue is the original ranking closure (design Decision 1: unedited,
+// moved verbatim into a shared helper): Qraw/price descending, tiebreak
+// Qraw descending. It backs both the "value" objective and, unmodified,
+// the "budget" objective (design Decision 4).
+func sortByValue(candidates []scoredModel) {
 	sort.Slice(candidates, func(i, j int) bool {
 		ri, rj := qualityPriceRatio(candidates[i]), qualityPriceRatio(candidates[j])
 		if ri != rj {
@@ -196,8 +233,25 @@ func findBestModel(models []EnrichedModel, role profile.Role, used map[string]in
 		// Tiebreak: higher raw score wins.
 		return candidates[i].qraw > candidates[j].qraw
 	})
+}
 
-	return &candidates[0]
+// sortByQuality ranks candidates by Qraw descending, tiebreak by price
+// (the "usd" denominator; PR2a adds the "quota" denominator) ascending,
+// tiebreak OCID ascending for a total order (weighted-scoring spec,
+// Requirement: Objective-Selected Comparator). The OCID tiebreak makes the
+// order deterministic even when Qraw AND price both tie — common on
+// single-metric roles, and sort.Slice is unstable — so the golden test
+// never becomes flaky (design Decision 4).
+func sortByQuality(candidates []scoredModel) {
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].qraw != candidates[j].qraw {
+			return candidates[i].qraw > candidates[j].qraw
+		}
+		if candidates[i].price != candidates[j].price {
+			return candidates[i].price < candidates[j].price
+		}
+		return candidates[i].model.OCID < candidates[j].model.OCID
+	})
 }
 
 // qualityPriceRatio returns Qraw / price for a candidate, or 0 when price
@@ -426,7 +480,20 @@ func buildReason(role profile.Role, best *scoredModel) string {
 		subInfo = " (Zen)"
 	}
 
-	return fmt.Sprintf("Mejor relación calidad/precio: %s, $%.3f/M input%s%s — %s", metric, price, ctxInfo, subInfo, role.Description)
+	// Reason text is selected per the role's effective objective (design
+	// Decision 6). The "value" arm is the pre-refactor format, unchanged.
+	switch objective(role) {
+	case profile.ObjectiveQuality:
+		return fmt.Sprintf("Máxima calidad disponible: %s, $%.3f/M input%s%s — %s", metric, price, ctxInfo, subInfo, role.Description)
+	case profile.ObjectiveBudget:
+		ceiling := 0.0
+		if role.MaxInputPrice != nil {
+			ceiling = *role.MaxInputPrice
+		}
+		return fmt.Sprintf("Mejor calidad/precio bajo $%.2f/M: %s, $%.3f/M input%s%s — %s", ceiling, metric, price, ctxInfo, subInfo, role.Description)
+	default: // profile.ObjectiveValue, and the fallback for a nil Selection
+		return fmt.Sprintf("Mejor relación calidad/precio: %s, $%.3f/M input%s%s — %s", metric, price, ctxInfo, subInfo, role.Description)
+	}
 }
 
 // FormatRecommendations returns a formatted text block for MCP output.
