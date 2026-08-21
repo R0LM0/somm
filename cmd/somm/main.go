@@ -102,6 +102,7 @@ func printUsage() {
 	fmt.Println("  OPENCODE_API_KEY              OpenCode Go/Zen subscription key (required)")
 	fmt.Println("  OPENROUTER_API_KEY            OpenRouter API key (optional)")
 	fmt.Println("  SOMM_PROFILE                  Path to role profile YAML file")
+	fmt.Println("  SOMM_OC_TIER                  OpenCode tier (go|zen); sets default selection.currency=quota")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  somm                          # Start server with auto-setup")
@@ -227,11 +228,21 @@ func run() error {
 		return errors.New("-opencode-api-key is required")
 	}
 
+	// The OpenCode tier captured once by the setup wizard and persisted as
+	// SOMM_OC_TIER refines the default selection currency of any role that
+	// does not set selection.currency explicitly. An unrecognized value is
+	// a fatal error, matching the -opencode-api-key fail-loud style — never
+	// a silent fallback to usd (design Decision 5).
+	tier := os.Getenv("SOMM_OC_TIER")
+	if _, err := profile.TierCurrency(tier); err != nil {
+		return fmt.Errorf("SOMM_OC_TIER: %w", err)
+	}
+
 	// Resolve the active role profile. A file selected by the resolution
 	// order that is malformed or fails validation is a fatal error — no
 	// silent fallback to the embedded default (role-profiles "Fail-Loud
 	// Validation").
-	prof, err := profile.Resolve(profilePath)
+	prof, err := profile.ResolveWithTier(profilePath, tier)
 	if err != nil {
 		return fmt.Errorf("resolving profile: %w", err)
 	}

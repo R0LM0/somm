@@ -214,6 +214,109 @@ func TestUpdateDoneMsgFailureKeepsUpdateAvailable(t *testing.T) {
 	}
 }
 
+func TestKeyInputEntersTierScreenAfterLastField(t *testing.T) {
+	m := testModel(t)
+	m = m.enterProviders()
+	m = sendKey(m, "enter") // only OpenCode selected -> a single key field
+
+	m = sendKey(m, "secret")
+	m = sendKey(m, "enter")
+
+	if m.screen != scrTier {
+		t.Fatalf("screen = %v, want scrTier", m.screen)
+	}
+	if len(m.tiers) != 2 {
+		t.Fatalf("tiers = %v, want 2 entries (go, zen)", m.tiers)
+	}
+}
+
+func TestTierCursorMovesAndWraps(t *testing.T) {
+	m := testModel(t)
+	m = m.enterProviders()
+	m = sendKey(m, "enter")
+	m = sendKey(m, "secret")
+	m = sendKey(m, "enter")
+
+	start := m.tierCursor
+	m = sendKey(m, "j")
+	if m.tierCursor == start {
+		t.Fatalf("tierCursor did not move after j")
+	}
+	m = sendKey(m, "k")
+	if m.tierCursor != start {
+		t.Fatalf("tierCursor after k = %d, want back to %d", m.tierCursor, start)
+	}
+}
+
+func TestTierEnterSetsKeyAndAdvancesToConfigProgress(t *testing.T) {
+	m := testModel(t)
+	m = m.enterProviders()
+	m = sendKey(m, "enter")
+	m = sendKey(m, "secret")
+	m = sendKey(m, "enter")
+
+	want := m.tiers[m.tierCursor]
+	m = sendKey(m, "enter")
+
+	if m.screen != scrConfigProgress {
+		t.Fatalf("screen = %v, want scrConfigProgress", m.screen)
+	}
+	if got := m.keys["SOMM_OC_TIER"]; got != want {
+		t.Fatalf("keys[SOMM_OC_TIER] = %q, want %q", got, want)
+	}
+}
+
+func TestTierEscReturnsToLastKeyField(t *testing.T) {
+	m := testModel(t)
+	m = m.enterProviders()
+	m = sendKey(m, "enter")
+	m = sendKey(m, "secret")
+	m = sendKey(m, "enter")
+
+	m = sendKey(m, "esc")
+	if m.screen != scrProviderKeyInput {
+		t.Fatalf("screen = %v, want scrProviderKeyInput", m.screen)
+	}
+	if m.keyIdx != len(m.keyFields)-1 {
+		t.Fatalf("keyIdx = %d, want %d (last key field)", m.keyIdx, len(m.keyFields)-1)
+	}
+}
+
+func TestTierScreenPreselectsExistingTierFromEnv(t *testing.T) {
+	m := testModel(t)
+	m.presetTier = "zen"
+
+	m = m.enterProviders()
+	m = sendKey(m, "enter")
+	m = sendKey(m, "secret")
+	m = sendKey(m, "enter")
+
+	if m.screen != scrTier {
+		t.Fatalf("screen = %v, want scrTier", m.screen)
+	}
+	if m.tiers[m.tierCursor] != "zen" {
+		t.Fatalf("tierCursor selects %q, want zen", m.tiers[m.tierCursor])
+	}
+}
+
+func TestTierScreenSkippedWhenAlreadyPersistedWithoutForce(t *testing.T) {
+	m := testModel(t)
+	m.presetTier = "go"
+	m.skipTierScreen = true
+
+	m = m.enterProviders()
+	m = sendKey(m, "enter")
+	m = sendKey(m, "secret")
+	m = sendKey(m, "enter")
+
+	if m.screen != scrConfigProgress {
+		t.Fatalf("screen = %v, want scrConfigProgress (tier screen must be skipped)", m.screen)
+	}
+	if got := m.keys["SOMM_OC_TIER"]; got != "go" {
+		t.Fatalf("keys[SOMM_OC_TIER] = %q, want %q (existing persisted tier must be preserved, not dropped)", got, "go")
+	}
+}
+
 var ansiRe = regexp.MustCompile("\x1b\\[[0-9;]*m")
 
 func stripANSI(s string) string {

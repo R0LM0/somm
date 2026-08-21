@@ -129,6 +129,49 @@ func TestServerRequiresOpenCodeKey(t *testing.T) {
 	}
 }
 
+// TestServerFailsFatalOnUnrecognizedTier verifies run() fails fatal, in the
+// same fail-loud style as -opencode-api-key required, when SOMM_OC_TIER
+// holds a value outside the go|zen domain.
+func TestServerFailsFatalOnUnrecognizedTier(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping subprocess smoke test in short mode")
+	}
+
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		t.Fatalf("finding repo root: %v", err)
+	}
+
+	binary := filepath.Join(t.TempDir(), "somm"+exeSuffix())
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = filepath.Join(repoRoot, "cmd", "somm")
+	build.Stderr = os.Stderr
+	if err := build.Run(); err != nil {
+		t.Skipf("skipping: failed to build somm binary: %v", err)
+	}
+
+	var stderr bytes.Buffer
+	cmd := exec.Command(binary, "--skip-setup", "-opencode-api-key", "test-key")
+	cmd.Dir = t.TempDir() // Run in temp dir without .env
+	cmd.Stderr = &stderr
+	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=test-key", "OPENROUTER_API_KEY=", "SOMM_OC_TIER=bogus")
+
+	err = cmd.Run()
+	if err == nil {
+		t.Fatal("expected server to fail with an unrecognized SOMM_OC_TIER, but it succeeded")
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
+	}
+	if exitErr.ExitCode() == 0 {
+		t.Fatalf("expected non-zero exit code, got %d", exitErr.ExitCode())
+	}
+	if !strings.Contains(stderr.String(), "SOMM_OC_TIER") {
+		t.Fatalf("expected an error message naming SOMM_OC_TIER, got stderr: %s", stderr.String())
+	}
+}
+
 func TestLoadEnvFile(t *testing.T) {
 	tmp := t.TempDir()
 	envPath := filepath.Join(tmp, ".env")

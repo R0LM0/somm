@@ -104,6 +104,12 @@ func runSetup() {
 		envPath = filepath.Join(filepath.Dir(binaryPath), ".env")
 	}
 
+	// The tier-presence check is independent of alreadyConfigured (keys):
+	// an existing install upgrading onto this feature has keys but no
+	// persisted tier yet, so it must still see the tier screen once.
+	presetTier := existingTier(envPath)
+	skipTierScreen := presetTier != "" && !force
+
 	m := newModel(modelInit{
 		configPath:        configPath,
 		config:            config,
@@ -113,6 +119,8 @@ func runSetup() {
 		updateAvailable:   updateAvailable,
 		latestVersion:     latestVersion,
 		currentVersion:    version,
+		presetTier:        presetTier,
+		skipTierScreen:    skipTierScreen,
 	})
 
 	if _, err := tea.NewProgram(m).Run(); err != nil {
@@ -164,6 +172,27 @@ func isAlreadyConfigured(envPath string, config *openCodeConfig) (bool, string) 
 	return true, entry.Command[0]
 }
 
+// existingTier reads the persisted SOMM_OC_TIER value from .env, if any. It
+// returns "" when the file is missing or the key is absent. This check is
+// deliberately independent of isAlreadyConfigured's key-presence check: an
+// existing install upgrading onto this feature can have OPENCODE_API_KEY
+// persisted with no SOMM_OC_TIER yet, so reusing alreadyConfigured to skip
+// the tier screen would mean that upgrading user never gets asked
+// (setup-wizard spec, Requirement: Tier Capture).
+func existingTier(envPath string) string {
+	data, err := os.ReadFile(envPath)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "SOMM_OC_TIER=") {
+			return strings.TrimPrefix(line, "SOMM_OC_TIER=")
+		}
+	}
+	return ""
+}
+
 func validateProviders(v []string) error {
 	if !slices.Contains(v, "OpenCode") {
 		return errors.New("OpenCode es requerido")
@@ -184,7 +213,7 @@ func keyNameForProvider(provider string) string {
 
 func saveEnvFile(envPath string, keys map[string]string) error {
 	var envContent strings.Builder
-	order := []string{"OPENCODE_API_KEY", "OPENROUTER_API_KEY"}
+	order := []string{"OPENCODE_API_KEY", "OPENROUTER_API_KEY", "SOMM_OC_TIER"}
 	for _, key := range order {
 		if value, ok := keys[key]; ok && value != "" {
 			envContent.WriteString(fmt.Sprintf("%s=%s\n", key, value))

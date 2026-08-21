@@ -75,30 +75,30 @@ before starting PR1.
 
 ## Phase 5 (PR2b): Tier Capture Wizard and Wiring
 
-- [ ] 5.1 In `internal/profile/resolve.go`, add `TierCurrency(tier string) (string, error)`: `""`->`"usd"`, `"go"`/`"zen"`->`"quota"`, else error (design Decision 5, Interfaces).
-- [ ] 5.2 Add `ResolveWithTier(flagPath, tier string) (*Profile, error)`: reuses `Resolve`'s source resolution, then overwrites each role's effective currency only where `!currencyExplicit`; redefine `Resolve(flagPath)` as `ResolveWithTier(flagPath, "")` so its 4 existing callers in `cmd/somm/main.go` are unaffected (design Decision 5).
-- [ ] 5.3 In `cmd/somm/main.go` `run()`, read `SOMM_OC_TIER`, call `profile.TierCurrency`, fail fatal on an unrecognized value (matching the existing `-opencode-api-key required` style), and call `profile.ResolveWithTier(profilePath, tier)` in place of `profile.Resolve(profilePath)` (design Decision 5, File Changes: main.go).
-- [ ] 5.4 In `cmd/somm/tui.go`, append `scrTier` last in the `screen` iota block (no renumbering) and add `tiers []string`/`tierCursor int` to `Model` (design Wizard flow).
-- [ ] 5.5 In `updateProviderKeyInput`, change the `m.keyIdx == len(m.keyFields)-1` branch to enter `scrTier` instead of `scrConfigProgress`; add `updateTier(msg tea.KeyMsg)` handling `up`/`down`, `enter` (sets `m.keys["SOMM_OC_TIER"]`, advances to `scrConfigProgress`), and `esc` (returns to the last key field, no skip) (setup-wizard: Tier Capture "asked once on first setup"; design Wizard flow).
-- [ ] 5.6 Add a `scrTier` case to `Model.View()` rendering the `go`/`zen` choice, cursor preselecting any tier already in `.env` (setup-wizard: Tier Capture; design Wizard flow preselection).
-- [ ] 5.7 In `cmd/somm/setup.go`, decide whether `scrTier` is needed independently of the existing `alreadyConfigured` key check: read `SOMM_OC_TIER` from `.env` at `envPath` and skip the screen only when already present and `--force` was not passed — this also covers an existing install upgrading onto this feature (`alreadyConfigured=true` for keys, no persisted tier yet) (setup-wizard: Tier Capture, all three scenarios).
-- [ ] 5.8 In `saveEnvFile`, append `"SOMM_OC_TIER"` to the `order` allowlist (setup-wizard: Persistence "Save writes the persisted tier").
+- [x] 5.1 In `internal/profile/resolve.go`, add `TierCurrency(tier string) (string, error)`: `""`->`"usd"`, `"go"`/`"zen"`->`"quota"`, else error (design Decision 5, Interfaces).
+- [x] 5.2 Add `ResolveWithTier(flagPath, tier string) (*Profile, error)`: reuses `Resolve`'s source resolution, then overwrites each role's effective currency only where `!currencyExplicit`; redefine `Resolve(flagPath)` as `ResolveWithTier(flagPath, "")` so its 4 existing callers in `cmd/somm/main.go` are unaffected (design Decision 5).
+- [x] 5.3 In `cmd/somm/main.go` `run()`, read `SOMM_OC_TIER`, call `profile.TierCurrency`, fail fatal on an unrecognized value (matching the existing `-opencode-api-key required` style), and call `profile.ResolveWithTier(profilePath, tier)` in place of `profile.Resolve(profilePath)` (design Decision 5, File Changes: main.go).
+- [x] 5.4 In `cmd/somm/tui.go`, append `scrTier` last in the `screen` iota block (no renumbering) and add `tiers []string`/`tierCursor int` to `Model` (design Wizard flow).
+- [x] 5.5 In `updateProviderKeyInput`, change the `m.keyIdx == len(m.keyFields)-1` branch to enter `scrTier` instead of `scrConfigProgress`; add `updateTier(msg tea.KeyMsg)` handling `up`/`down`, `enter` (sets `m.keys["SOMM_OC_TIER"]`, advances to `scrConfigProgress`), and `esc` (returns to the last key field, no skip) (setup-wizard: Tier Capture "asked once on first setup"; design Wizard flow).
+- [x] 5.6 Add a `scrTier` case to `Model.View()` rendering the `go`/`zen` choice, cursor preselecting any tier already in `.env` (setup-wizard: Tier Capture; design Wizard flow preselection).
+- [x] 5.7 In `cmd/somm/setup.go`, decide whether `scrTier` is needed independently of the existing `alreadyConfigured` key check: read `SOMM_OC_TIER` from `.env` at `envPath` and skip the screen only when already present and `--force` was not passed — this also covers an existing install upgrading onto this feature (`alreadyConfigured=true` for keys, no persisted tier yet) (setup-wizard: Tier Capture, all three scenarios).
+- [x] 5.8 In `saveEnvFile`, append `"SOMM_OC_TIER"` to the `order` allowlist (setup-wizard: Persistence "Save writes the persisted tier").
 
 ## Phase 6 (PR2b): Tests — Tier Resolution and Wizard
 
-- [ ] 6.1 `internal/profile/resolve_test.go`: `TierCurrency` domain — `""`->usd, `go`/`zen`->quota, unrecognized->error (design Decision 5).
-- [ ] 6.2 `internal/profile/resolve_test.go`: explicit `selection.currency` beats a non-empty tier passed to `ResolveWithTier` (design Decision 5).
-- [ ] 6.3 `cmd/somm/tui_test.go`: direct `Model.Update()` with `tea.KeyMsg` (go-testing gate) — `scrTier` entry from the last key field, cursor movement, `enter` sets `SOMM_OC_TIER` and advances, `esc` returns to the last key field (setup-wizard: Tier Capture "asked once"; design Wizard flow).
-- [ ] 6.4 `cmd/somm/tui_test.go`: `Model.Update()` — cursor preselects the tier already present in `.env` on entry to `scrTier` (design Wizard flow preselection).
-- [ ] 6.5 `cmd/somm/setup_test.go`: `t.TempDir()` `.env` round-trip — `saveEnvFile` with all three keys writes and reloads `OPENCODE_API_KEY`, `OPENROUTER_API_KEY`, `SOMM_OC_TIER` (design Threat Matrix mutation note; setup-wizard: Persistence "Save writes the persisted tier").
-- [ ] 6.6 `cmd/somm/setup_test.go`: without `--force`, `scrTier` is skipped and the value is not overwritten when `.env` already has `SOMM_OC_TIER`; with `--force`, the screen re-shows and may overwrite it (setup-wizard: Tier Capture "not re-asked"/"--force re-asks").
-- [ ] 6.7 `cmd/somm/main_test.go`: `run()` fails fatal on an unrecognized `SOMM_OC_TIER` value, matching the existing fail-loud style (design Decision 5).
+- [x] 6.1 `internal/profile/resolve_test.go`: `TierCurrency` domain — `""`->usd, `go`/`zen`->quota, unrecognized->error (design Decision 5).
+- [x] 6.2 `internal/profile/resolve_test.go`: explicit `selection.currency` beats a non-empty tier passed to `ResolveWithTier` (design Decision 5).
+- [x] 6.3 `cmd/somm/tui_test.go`: direct `Model.Update()` with `tea.KeyMsg` (go-testing gate) — `scrTier` entry from the last key field, cursor movement, `enter` sets `SOMM_OC_TIER` and advances, `esc` returns to the last key field (setup-wizard: Tier Capture "asked once"; design Wizard flow).
+- [x] 6.4 `cmd/somm/tui_test.go`: `Model.Update()` — cursor preselects the tier already present in `.env` on entry to `scrTier` (design Wizard flow preselection).
+- [x] 6.5 `cmd/somm/setup_test.go`: `t.TempDir()` `.env` round-trip — `saveEnvFile` with all three keys writes and reloads `OPENCODE_API_KEY`, `OPENROUTER_API_KEY`, `SOMM_OC_TIER` (design Threat Matrix mutation note; setup-wizard: Persistence "Save writes the persisted tier").
+- [x] 6.6 `cmd/somm/setup_test.go`: without `--force`, `scrTier` is skipped and the value is not overwritten when `.env` already has `SOMM_OC_TIER`; with `--force`, the screen re-shows and may overwrite it (setup-wizard: Tier Capture "not re-asked"/"--force re-asks").
+- [x] 6.7 `cmd/somm/main_test.go`: `run()` fails fatal on an unrecognized `SOMM_OC_TIER` value, matching the existing fail-loud style (design Decision 5).
 
 ## Phase 7 (PR2b): Integration and Cleanup
 
-- [ ] 7.1 Run `go build ./...` and `go vet ./...`; confirm no remaining `profile.Resolve` call site needing `ResolveWithTier` and no signature mismatches.
-- [ ] 7.2 Run full `go test ./...`; re-confirm `TestGoldenParity` passes byte-for-byte against `testdata/gentle-ai.golden` after all three PRs.
-- [ ] 7.3 Update developer-facing docs/comments (README, `cmd/somm/main.go` help text) describing tier-aware profile resolution and the `selection`/`frequency` YAML fields.
+- [x] 7.1 Run `go build ./...` and `go vet ./...`; confirm no remaining `profile.Resolve` call site needing `ResolveWithTier` and no signature mismatches.
+- [x] 7.2 Run full `go test ./...`; re-confirm `TestGoldenParity` passes byte-for-byte against `testdata/gentle-ai.golden` after all three PRs.
+- [x] 7.3 Update developer-facing docs/comments (README, `cmd/somm/main.go` help text) describing tier-aware profile resolution and the `selection`/`frequency` YAML fields.
 
 ## Key Learnings
 
