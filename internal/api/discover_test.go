@@ -1,9 +1,16 @@
 package api
 
 import (
+	"context"
+	"fmt"
+	"os/exec"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestParseDiscoverOutput_Valid covers a multi-provider fixture matching the
@@ -246,5 +253,324 @@ func TestParseDiscoverOutput_LargeValidInputDoesNotChoke(t *testing.T) {
 	}
 	if got[n-1].ID != "model-"+strconv.Itoa(n-1) {
 		t.Errorf("last record ID = %q, want %q", got[n-1].ID, "model-"+strconv.Itoa(n-1))
+	}
+}
+
+// --- execDiscoverer: subprocess boundary (Phase 3, threat matrix) ---
+//
+// The production runner is replaced by an injected `runner func(ctx)
+// ([]byte, error)` in every test below (design Testing Strategy:
+// Unit(subprocess)) — none of these spawn a real `opencode` process, so they
+// stay fast and portable. TestExecDiscoverer_ArgvExactNoInterpolation is the
+// one exception: it asserts the pure argv-builder used by the REAL runner
+// directly, which is what actually proves "no shell, no interpolation"
+// without spawning anything.
+
+// TestExecDiscoverer_ArgvExactNoInterpolation is the threat-matrix "binary
+// resolution" case: the real runner's argv must be exactly
+// {"models","--verbose"}, with the only variation being the fixed
+// "--refresh" literal gated by SOMM_OC_DISCOVERY_REFRESH=1 — never any
+// interpolated/user-supplied value.
+func TestExecDiscoverer_ArgvExactNoInterpolation(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		got := buildDiscoverArgv()
+		want := []string{"models", "--verbose"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("buildDiscoverArgv() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("refresh escape hatch", func(t *testing.T) {
+		t.Setenv("SOMM_OC_DISCOVERY_REFRESH", "1")
+		got := buildDiscoverArgv()
+		want := []string{"models", "--verbose", "--refresh"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("buildDiscoverArgv() = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("refresh unset leaves argv untouched", func(t *testing.T) {
+		t.Setenv("SOMM_OC_DISCOVERY_REFRESH", "0")
+		got := buildDiscoverArgv()
+		want := []string{"models", "--verbose"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("buildDiscoverArgv() = %v, want %v", got, want)
+		}
+	})
+}
+
+// TestExecDiscoverer_HostileOutputIgnoresUnknownFields is the threat-matrix
+// "PATH hijack" case: a hostile runner (standing in for a compromised
+// `opencode` on PATH) emits unexpected/nested fields and path-like/exec-like
+// values. Discover must decode into the typed DiscoveredModel and never
+// execute or otherwise act on the hostile content — it reuses the
+// already-tested parseDiscoverOutput.
+func TestExecDiscoverer_HostileOutputIgnoresUnknownFields(t *testing.T) {
+	hostile := []byte(`openai/gpt-5.6
+{"id":"gpt-5.6","providerID":"openai","name":"GPT 5.6","cost":{"input":3,"output":12},"path":"/usr/bin/sh","exec":["rm","-rf","/"],"nested":{"a":{"b":{"c":1}}}}
+`)
+	d := newExecDiscoverer()
+	d.runner = func(ctx context.Context) ([]byte, error) { return hostile, nil }
+
+	got, err := d.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("Discover() error = %v, want nil", err)
+	}
+	if len(got) != 1 || got[0].ID != "gpt-5.6" || got[0].ProviderID != "openai" {
+		t.Fatalf("Discover() = %+v, want one openai/gpt-5.6 record with unknown fields ignored", got)
+	}
+	if got[0].InputPerM != 3 || got[0].OutputPerM != 12 {
+		t.Errorf("Discover() price = input:%v output:%v, want input:3 output:12", got[0].InputPerM, got[0].OutputPerM)
+	}
+}
+
+// TestExecDiscoverer_OversizeStdoutTreatedAsMalformed is the threat-matrix
+// "unbounded stdout" case: output past the 8 MiB cap is treated as
+// malformed — Discover warns and returns (nil, error) non-fatally, it never
+// crashes and never attempts to parse the oversized payload.
+func TestExecDiscoverer_OversizeStdoutTreatedAsMalformed(t *testing.T) {
+	oversized := make([]byte, discoverMaxStdout+1)
+	for i := range oversized {
+		oversized[i] = 'a'
+	}
+
+	d := newExecDiscoverer()
+	d.runner = func(ctx context.Context) ([]byte, error) { return oversized, nil }
+
+	got, err := d.Discover(context.Background())
+	if err == nil {
+		t.Fatal("Discover() error = nil, want non-nil for oversize stdout")
+	}
+	if got != nil {
+		t.Errorf("Discover() = %v, want nil result alongside the error", got)
+	}
+}
+
+// TestExecDiscoverer_HangPastDeadlineKilled is the threat-matrix
+// "hang/no exit" case: a runner that never returns on its own must still
+// bound Discover's total wait to the configured timeout — proving the
+// context deadline (which exec.CommandContext ties process kill/reap to in
+// the real runner) actually propagates into the runner call.
+func TestExecDiscoverer_HangPastDeadlineKilled(t *testing.T) {
+	d := newExecDiscoverer()
+	d.timeout = 30 * time.Millisecond
+	d.runner = func(ctx context.Context) ([]byte, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+
+	start := time.Now()
+	got, err := d.Discover(context.Background())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Discover() error = nil, want non-nil for a hung runner")
+	}
+	if got != nil {
+		t.Errorf("Discover() = %v, want nil result alongside the error", got)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("Discover() took %v, want bounded near the 30ms timeout (proves it does not wait forever)", elapsed)
+	}
+}
+
+// TestExecDiscoverer_NonZeroExitStderrTruncated is the threat-matrix
+// "non-zero exit" case: stderr must be captured but never logged/propagated
+// in full — truncateStderr (used by the real runner) bounds it to
+// discoverMaxStderr bytes.
+func TestExecDiscoverer_NonZeroExitStderrTruncated(t *testing.T) {
+	longStderr := strings.Repeat("x", discoverMaxStderr*4)
+	truncated := truncateStderr([]byte(longStderr), discoverMaxStderr)
+	if len(truncated) >= len(longStderr) {
+		t.Fatalf("truncateStderr() did not shrink a %d-byte input", len(longStderr))
+	}
+	if !strings.HasPrefix(truncated, strings.Repeat("x", discoverMaxStderr)) {
+		t.Fatalf("truncateStderr() = %q, want it to start with the first %d bytes", truncated, discoverMaxStderr)
+	}
+
+	d := newExecDiscoverer()
+	d.runner = func(ctx context.Context) ([]byte, error) {
+		return nil, fmt.Errorf("opencode discovery: process exited with error: exit status 1 (stderr: %s)", truncated)
+	}
+
+	got, err := d.Discover(context.Background())
+	if err == nil {
+		t.Fatal("Discover() error = nil, want non-nil for a non-zero exit")
+	}
+	if got != nil {
+		t.Errorf("Discover() = %v, want nil result alongside the error", got)
+	}
+	if strings.Contains(err.Error(), longStderr) {
+		t.Error("Discover() error contains the full untruncated stderr, want it bounded")
+	}
+}
+
+// TestExecDiscoverer_ConcurrentCallsSingleFlight is the threat-matrix
+// "concurrent tool calls" case: N callers racing Discover() must share one
+// subprocess invocation, never spawn N. The counting runner is the proof.
+func TestExecDiscoverer_ConcurrentCallsSingleFlight(t *testing.T) {
+	var calls int32
+	release := make(chan struct{})
+
+	d := newExecDiscoverer()
+	d.runner = func(ctx context.Context) ([]byte, error) {
+		atomic.AddInt32(&calls, 1)
+		<-release // hold the "subprocess" open until every caller has joined
+		return []byte(`openai/gpt-5.6
+{"id":"gpt-5.6","providerID":"openai","name":"GPT 5.6","cost":{"input":3,"output":12}}
+`), nil
+	}
+
+	const n = 20
+	var wg sync.WaitGroup
+	results := make([][]DiscoveredModel, n)
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = d.Discover(context.Background())
+		}(i)
+	}
+
+	// Give every goroutine a chance to reach the in-flight wait before
+	// releasing the single shared "subprocess" call.
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("runner invocation count = %d, want exactly 1 (single-flight)", got)
+	}
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Errorf("Discover() call %d error = %v, want nil", i, errs[i])
+		}
+		if len(results[i]) != 1 || results[i][0].ID != "gpt-5.6" {
+			t.Errorf("Discover() call %d = %+v, want the shared gpt-5.6 result", i, results[i])
+		}
+	}
+}
+
+// TestExecDiscoverer_TTLCache proves success is cached longer than failure
+// (design D3: success 5m, failure 60s) and that an expired entry re-invokes
+// the runner. cachedAt is rewound directly (white-box, same package) instead
+// of sleeping out real minutes.
+func TestExecDiscoverer_TTLCache(t *testing.T) {
+	var calls int32
+	d := newExecDiscoverer()
+	d.runner = func(ctx context.Context) ([]byte, error) {
+		atomic.AddInt32(&calls, 1)
+		return []byte(`openai/gpt-5.6
+{"id":"gpt-5.6","providerID":"openai","name":"GPT 5.6","cost":{"input":3,"output":12}}
+`), nil
+	}
+
+	if _, err := d.Discover(context.Background()); err != nil {
+		t.Fatalf("Discover() error = %v, want nil", err)
+	}
+	if _, err := d.Discover(context.Background()); err != nil {
+		t.Fatalf("Discover() error = %v, want nil", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("runner invocation count = %d, want 1 (second call within success TTL must hit the cache)", got)
+	}
+
+	d.mu.Lock()
+	d.cachedAt = time.Now().Add(-discoverSuccessTTL - time.Second)
+	d.mu.Unlock()
+
+	if _, err := d.Discover(context.Background()); err != nil {
+		t.Fatalf("Discover() error = %v, want nil", err)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("runner invocation count = %d, want 2 (success TTL expired, must re-invoke)", got)
+	}
+
+	// Now exercise the shorter failure TTL: force a failing call, confirm
+	// the cached failure is reused immediately, then confirm it expires
+	// faster than a cached success would.
+	failing := &execDiscoverer{runner: func(ctx context.Context) ([]byte, error) {
+		atomic.AddInt32(&calls, 1)
+		return nil, errFakeDiscover
+	}, timeout: discoverTimeout}
+
+	if _, err := failing.Discover(context.Background()); err == nil {
+		t.Fatal("Discover() error = nil, want non-nil for the injected failure")
+	}
+	before := atomic.LoadInt32(&calls)
+	if _, err := failing.Discover(context.Background()); err == nil {
+		t.Fatal("Discover() error = nil, want non-nil (still within failure TTL)")
+	}
+	if got := atomic.LoadInt32(&calls); got != before {
+		t.Fatalf("runner invocation count changed from %d to %d, want unchanged (cached failure within TTL)", before, got)
+	}
+
+	failing.mu.Lock()
+	failing.cachedAt = time.Now().Add(-discoverFailureTTL - time.Second)
+	failing.mu.Unlock()
+
+	if _, err := failing.Discover(context.Background()); err == nil {
+		t.Fatal("Discover() error = nil, want non-nil for the injected failure")
+	}
+	if got := atomic.LoadInt32(&calls); got != before+1 {
+		t.Fatalf("runner invocation count = %d, want %d (failure TTL expired, must re-invoke)", got, before+1)
+	}
+}
+
+// TestExecDiscoverer_DisabledByEnv proves SOMM_DISCOVERY=off is the rollback
+// path: Discover must never invoke the runner at all.
+func TestExecDiscoverer_DisabledByEnv(t *testing.T) {
+	t.Setenv("SOMM_DISCOVERY", "off")
+
+	var calls int32
+	d := newExecDiscoverer()
+	d.runner = func(ctx context.Context) ([]byte, error) {
+		atomic.AddInt32(&calls, 1)
+		return []byte(`openai/gpt-5.6
+{"id":"gpt-5.6","providerID":"openai","name":"GPT 5.6","cost":{"input":3,"output":12}}
+`), nil
+	}
+
+	got, err := d.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("Discover() error = %v, want nil", err)
+	}
+	if got != nil {
+		t.Errorf("Discover() = %v, want nil (disabled)", got)
+	}
+	if calls != 0 {
+		t.Fatalf("runner invocation count = %d, want 0 (SOMM_DISCOVERY=off must never invoke the runner)", calls)
+	}
+}
+
+// errFakeDiscover is a sentinel error for TTL-cache tests that need a
+// deterministic non-nil failure without depending on runOpencodeDiscover.
+var errFakeDiscover = fmt.Errorf("fake discover failure")
+
+// TestExecDiscoverer_RealCLI exercises the real opencode CLI end to end. It
+// skips in -short mode and when opencode is not on PATH (design Testing
+// Strategy: Integration), and asserts a sane $/M range as a D7 unit-error
+// regression guard.
+func TestExecDiscoverer_RealCLI(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real opencode CLI integration test in -short mode")
+	}
+	if _, err := exec.LookPath("opencode"); err != nil {
+		t.Skip("opencode not found on PATH")
+	}
+
+	d := newExecDiscoverer()
+	models, err := d.Discover(context.Background())
+	if err != nil {
+		t.Fatalf("Discover() error = %v, want nil against a real opencode install", err)
+	}
+	for _, m := range models {
+		if m.InputPerM < 0 || m.InputPerM > 1000 {
+			t.Errorf("model %s/%s InputPerM = %v, outside sane $/M range (D7 unit regression guard)", m.ProviderID, m.ID, m.InputPerM)
+		}
+		if m.OutputPerM < 0 || m.OutputPerM > 1000 {
+			t.Errorf("model %s/%s OutputPerM = %v, outside sane $/M range (D7 unit regression guard)", m.ProviderID, m.ID, m.OutputPerM)
+		}
 	}
 }

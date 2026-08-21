@@ -103,6 +103,8 @@ func printUsage() {
 	fmt.Println("  OPENROUTER_API_KEY            OpenRouter API key (optional)")
 	fmt.Println("  SOMM_PROFILE                  Path to role profile YAML file")
 	fmt.Println("  SOMM_OC_TIER                  OpenCode tier (go|zen); sets default selection.currency=quota")
+	fmt.Println("  SOMM_DISCOVERY                Set to 'off' to disable local opencode CLI discovery (rollback path)")
+	fmt.Println("  SOMM_OC_DISCOVERY_REFRESH     Set to '1' to force a live refresh on each opencode CLI discovery call")
 	fmt.Println()
 	fmt.Println("Examples:")
 	fmt.Println("  somm                          # Start server with auto-setup")

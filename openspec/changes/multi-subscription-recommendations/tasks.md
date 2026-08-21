@@ -66,23 +66,23 @@ not code correctness.
 
 ## Phase 3: execDiscoverer Subprocess Boundary (PR 3 — depends on Phase 2/A)
 
-- [ ] 3.1 `discover.go`: `execDiscoverer` implementing `ProviderDiscoverer` — `exec.LookPath("opencode")` only, `exec.CommandContext(ctx, path, "models", "--verbose")`, fixed argv, never a shell.
-- [ ] 3.2 `discover.go`: 5s timeout via `context.WithTimeout`; process killed and reaped on deadline.
-- [ ] 3.3 `discover.go`: `io.LimitReader` on stdout at 8 MiB; over-limit treated as malformed, warn+continue.
-- [ ] 3.4 `discover.go`: stderr captured, truncated to 512 bytes before logging on non-zero exit.
-- [ ] 3.5 `discover.go`: in-process TTL cache (success 5m, failure 60s) + single-flight so concurrent `Discover` calls share one process.
-- [ ] 3.6 `discover.go`: `SOMM_DISCOVERY=off` short-circuits to disabled/no-op (rollback path); `SOMM_OC_DISCOVERY_REFRESH=1` appends `--refresh` to argv (D1 escape hatch).
-- [ ] 3.7 [RED] `TestExecDiscoverer_ArgvExactNoInterpolation` — threat matrix: binary resolution.
-- [ ] 3.8 [RED] `TestExecDiscoverer_HostileOutputIgnoresUnknownFields` — threat matrix: PATH hijack.
-- [ ] 3.9 [RED] `TestExecDiscoverer_OversizeStdoutTreatedAsMalformed` — threat matrix: unbounded stdout.
-- [ ] 3.10 [RED] `TestExecDiscoverer_HangPastDeadlineKilled` — threat matrix: hang/no exit (injected `runner func(ctx) ([]byte, error)` respecting cancellation).
-- [ ] 3.11 [RED] `TestExecDiscoverer_NonZeroExitStderrTruncated` — threat matrix: non-zero exit.
-- [ ] 3.12 [RED] `TestExecDiscoverer_ConcurrentCallsSingleFlight` — threat matrix: concurrent tool calls, counting runner asserts exactly one process.
-- [ ] 3.13 [RED] `TestExecDiscoverer_TTLCache` — success cached 5m, failure cached 60s.
-- [ ] 3.14 [RED] `TestExecDiscoverer_DisabledByEnv` — `SOMM_DISCOVERY=off` never invokes runner.
-- [ ] 3.15 [GREEN] implement until 3.7-3.14 pass; `go test ./internal/api/... -run TestExecDiscoverer -v -race`.
-- [ ] 3.16 `cmd/somm/main.go`: document `SOMM_DISCOVERY`/`SOMM_OC_DISCOVERY_REFRESH` in relevant tool/help text.
-- [ ] 3.17 [Integration, skippable] `TestExecDiscoverer_RealCLI` — skip via `testing.Short()` and `exec.LookPath("opencode")` failure; assert sane $/M range (D7 regression guard).
+- [x] 3.1 `discover.go`: `execDiscoverer` implementing `ProviderDiscoverer` — `exec.LookPath("opencode")` only, `exec.CommandContext(ctx, path, "models", "--verbose")`, fixed argv, never a shell.
+- [x] 3.2 `discover.go`: 5s timeout via `context.WithTimeout`; process killed and reaped on deadline.
+- [x] 3.3 `discover.go`: `io.LimitReader` on stdout at 8 MiB; over-limit treated as malformed, warn+continue.
+- [x] 3.4 `discover.go`: stderr captured, truncated to 512 bytes before logging on non-zero exit.
+- [x] 3.5 `discover.go`: in-process TTL cache (success 5m, failure 60s) + single-flight so concurrent `Discover` calls share one process.
+- [x] 3.6 `discover.go`: `SOMM_DISCOVERY=off` short-circuits to disabled/no-op (rollback path); `SOMM_OC_DISCOVERY_REFRESH=1` appends `--refresh` to argv (D1 escape hatch).
+- [x] 3.7 [RED] `TestExecDiscoverer_ArgvExactNoInterpolation` — threat matrix: binary resolution.
+- [x] 3.8 [RED] `TestExecDiscoverer_HostileOutputIgnoresUnknownFields` — threat matrix: PATH hijack.
+- [x] 3.9 [RED] `TestExecDiscoverer_OversizeStdoutTreatedAsMalformed` — threat matrix: unbounded stdout.
+- [x] 3.10 [RED] `TestExecDiscoverer_HangPastDeadlineKilled` — threat matrix: hang/no exit (injected `runner func(ctx) ([]byte, error)` respecting cancellation).
+- [x] 3.11 [RED] `TestExecDiscoverer_NonZeroExitStderrTruncated` — threat matrix: non-zero exit.
+- [x] 3.12 [RED] `TestExecDiscoverer_ConcurrentCallsSingleFlight` — threat matrix: concurrent tool calls, counting runner asserts exactly one process.
+- [x] 3.13 [RED] `TestExecDiscoverer_TTLCache` — success cached 5m, failure cached 60s.
+- [x] 3.14 [RED] `TestExecDiscoverer_DisabledByEnv` — `SOMM_DISCOVERY=off` never invokes runner.
+- [x] 3.15 [GREEN] implement until 3.7-3.14 pass; `go test ./internal/api/... -run TestExecDiscoverer -v -race`. (NOTE: `-race` unavailable in this apply session — CGO_ENABLED=0 and no gcc on this Windows host; ran without `-race`. All 8 mandatory RED tests + TTLCache/DisabledByEnv green; single-flight/TTL-cache locking reviewed by hand for data races — see apply-progress.)
+- [x] 3.16 `cmd/somm/main.go`: document `SOMM_DISCOVERY`/`SOMM_OC_DISCOVERY_REFRESH` in relevant tool/help text.
+- [x] 3.17 [Integration, skippable] `TestExecDiscoverer_RealCLI` — skip via `testing.Short()` and `exec.LookPath("opencode")` failure; assert sane $/M range (D7 regression guard).
 
 ## Phase 4: Merge + Price-Source Guard (PR 4 — depends on Phase 2/A; ATOMIC, D6)
 
