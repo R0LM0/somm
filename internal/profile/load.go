@@ -2,6 +2,7 @@ package profile
 
 import (
 	"fmt"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -71,8 +72,9 @@ func validate(p *Profile) error {
 	return nil
 }
 
-// validateSelection rejects an unrecognized objective or currency value in
-// a Selection block. A nil block or an unset field is always valid — enum
+// validateSelection rejects an unrecognized objective or currency value, a
+// malformed providers entry, or an explicitly empty providers list in a
+// Selection block. A nil block or an unset field is always valid — enum
 // checks apply only to values actually present (role-profiles spec,
 // Requirement: Selection Block Schema).
 func validateSelection(s *Selection, context string) error {
@@ -84,6 +86,19 @@ func validateSelection(s *Selection, context string) error {
 	}
 	if s.Currency != "" && !validCurrencies[s.Currency] {
 		return fmt.Errorf("%s: unknown currency value %q (valid: usd, quota)", context, s.Currency)
+	}
+	// Providers != nil but len == 0 means the YAML explicitly wrote
+	// `providers: []`, distinct from the field being absent entirely
+	// (nil). An explicit empty list is a load error (D8) because it is an
+	// un-expressible footgun: omitting the field is the correct way to
+	// mean "all configured providers".
+	if s.Providers != nil && len(s.Providers) == 0 {
+		return fmt.Errorf("%s: providers is explicitly empty; omit the field entirely to mean all configured providers", context)
+	}
+	for i, provider := range s.Providers {
+		if strings.TrimSpace(provider) == "" {
+			return fmt.Errorf("%s: providers entry %d is empty or whitespace-only", context, i)
+		}
 	}
 	return nil
 }
@@ -111,13 +126,19 @@ func mergeDefaults(p *Profile) {
 // resolveSelection overwrites r.Selection with the fully resolved,
 // non-nil effective selection, applying each field independently in
 // precedence order role -> profile -> {value, usd} (role-profiles spec,
-// Requirement: Per-Role Selection Override). It also records whether the
-// effective currency came from an explicit role- or profile-level
-// selection.currency, as opposed to the {value, usd} fallback.
+// Requirement: Per-Role Selection Override). Providers follows the same
+// scalar-replace precedence: nil (unset at that level) inherits from the
+// next level down; a non-nil (and, post-validation, non-empty) list
+// replaces it entirely (role-profiles spec, Requirement: Per-Role
+// Selection Override; Requirement: Provider Scope Default Is All
+// Configured Providers). It also records whether the effective currency
+// came from an explicit role- or profile-level selection.currency, as
+// opposed to the {value, usd} fallback.
 func resolveSelection(r *Role, profileSel *Selection) {
 	objective := ObjectiveValue
 	currency := CurrencyUSD
 	currencyExplicit := false
+	var providers []string
 
 	if profileSel != nil {
 		if profileSel.Objective != "" {
@@ -126,6 +147,9 @@ func resolveSelection(r *Role, profileSel *Selection) {
 		if profileSel.Currency != "" {
 			currency = profileSel.Currency
 			currencyExplicit = true
+		}
+		if profileSel.Providers != nil {
+			providers = profileSel.Providers
 		}
 	}
 
@@ -137,8 +161,11 @@ func resolveSelection(r *Role, profileSel *Selection) {
 			currency = r.Selection.Currency
 			currencyExplicit = true
 		}
+		if r.Selection.Providers != nil {
+			providers = r.Selection.Providers
+		}
 	}
 
-	r.Selection = &Selection{Objective: objective, Currency: currency}
+	r.Selection = &Selection{Objective: objective, Currency: currency, Providers: providers}
 	r.currencyExplicit = currencyExplicit
 }

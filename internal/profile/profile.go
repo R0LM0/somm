@@ -85,9 +85,18 @@ func FrequencyWeight(freq string) float64 {
 // field within a present block, resolves to {value, usd} through profile
 // then role-level inheritance (see Requirement: Selection Block Schema,
 // Requirement: Per-Role Selection Override).
+// Providers narrows the candidate set to a specific set of provider identity
+// tokens (matched case-insensitively against a candidate's ProviderID). nil
+// (the field absent from YAML) resolves to "all configured providers"; an
+// explicit empty list is a load error (see Requirement: Selection Block
+// Schema, Requirement: Provider Scope Default Is All Configured Providers).
+// Identifiers are free-form and are never validated against live host
+// state — an unconfigured provider name simply yields zero candidates at
+// ranking time.
 type Selection struct {
-	Objective string `yaml:"objective,omitempty"` // value | quality | budget
-	Currency  string `yaml:"currency,omitempty"`  // usd | quota
+	Objective string   `yaml:"objective,omitempty"` // value | quality | budget
+	Currency  string   `yaml:"currency,omitempty"`  // usd | quota
+	Providers []string `yaml:"providers,omitempty"`
 }
 
 // Profile is the top-level YAML document describing the active set of
