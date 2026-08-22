@@ -62,7 +62,9 @@ somm
 
 The wizard will:
 1. Check if you already have API keys configured
-2. Ask which providers you want to use (OpenCode required, OpenRouter optional)
+2. Ask which providers you want to use (both optional — OpenCode Go/Zen is
+   also covered by [provider discovery](#provider-discovery) if you skip it,
+   OpenRouter is recommended for benchmarks)
 3. Guide you through pasting each API key
 4. Ask which OpenCode tier you're on (`go` or `zen`) — asked once, only on
    first setup or with `--force`
@@ -77,8 +79,8 @@ If you prefer manual configuration, see the options below.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENCODE_API_KEY` | Yes | OpenCode Go/Zen subscription key |
-| `OPENROUTER_API_KEY` | No | OpenRouter API key for benchmarks |
+| `OPENCODE_API_KEY` | No | OpenCode Go/Zen subscription key. Optional — [provider discovery](#provider-discovery) already covers OC Go/Zen (and any other provider) via the local `opencode` CLI when it's authenticated, no key needed. Set this only if you want the direct HTTP fetch as well/instead. |
+| `OPENROUTER_API_KEY` | No | OpenRouter API key for benchmarks. Recommended: benchmarks (intelligence/coding/agentic) come from OpenRouter and nowhere else; the key itself stays optional since OpenRouter's catalog is public. |
 | `SOMM_PROFILE` | No | Path to a role profile YAML file (see [Role profiles](#role-profiles)) |
 | `SOMM_OC_TIER` | No | Your OpenCode subscription tier: `go` or `zen`. Captured once by the setup wizard; refines the default `selection.currency` (see [Role profiles](#role-profiles)) to `quota` for any role that doesn't set it explicitly. Unset defaults to `usd`. |
 | `SOMM_DISCOVERY` | No | Set to `off` to disable local `opencode` CLI provider discovery (see [Provider discovery](#provider-discovery)). On by default; failures already degrade gracefully, this is a hard rollback switch. |
