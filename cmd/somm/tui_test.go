@@ -127,7 +127,7 @@ func TestConfirmAddAcceptSkipsRelocationWhenAlreadyCorrect(t *testing.T) {
 	if m.screen != scrProviders {
 		t.Fatalf("screen = %v, want scrProviders", m.screen)
 	}
-	if len(m.providers) == 0 || !m.providers[0].selected || !m.providers[0].required {
+	if len(m.providers) != 2 || !m.providers[0].selected || !m.providers[1].selected {
 		t.Fatalf("providers not initialized as expected: %+v", m.providers)
 	}
 }
@@ -136,10 +136,16 @@ func TestProvidersToggleAndSubmit(t *testing.T) {
 	m := testModel(t)
 	m = m.enterProviders()
 
+	// Both providers start selected by default now, so a full toggle
+	// round-trip (off, then back on) must leave OpenRouter selected again.
 	m = sendKey(m, "j")     // move cursor to OpenRouter
-	m = sendKey(m, "space") // toggle it on
+	m = sendKey(m, "space") // toggle it off
+	if m.providers[1].selected {
+		t.Fatalf("OpenRouter still selected after space")
+	}
+	m = sendKey(m, "space") // toggle it back on
 	if !m.providers[1].selected {
-		t.Fatalf("OpenRouter not selected after space")
+		t.Fatalf("OpenRouter not selected after toggling back on")
 	}
 
 	m = sendKey(m, "enter")
@@ -151,27 +157,91 @@ func TestProvidersToggleAndSubmit(t *testing.T) {
 	}
 }
 
-func TestProvidersRequiredCannotBeToggled(t *testing.T) {
+// TestProvidersAllToggleable replaces the old
+// TestProvidersRequiredCannotBeToggled: no provider is required anymore, so
+// both OpenCode and OpenRouter must toggle freely with space.
+func TestProvidersAllToggleable(t *testing.T) {
 	m := testModel(t)
-	m = m.enterProviders() // cursor starts on OpenCode (index 0, required)
+	m = m.enterProviders() // cursor starts on OpenCode (index 0)
 
 	m = sendKey(m, "space")
-	if !m.providers[0].selected {
-		t.Fatalf("required OpenCode provider got deselected by space")
+	if m.providers[0].selected {
+		t.Fatalf("OpenCode still selected after space, want toggled off")
+	}
+
+	m = sendKey(m, "j") // move cursor to OpenRouter
+	m = sendKey(m, "space")
+	if m.providers[1].selected {
+		t.Fatalf("OpenRouter still selected after space, want toggled off")
 	}
 }
 
-func TestKeyInputRejectsEmptyOpenCodeKey(t *testing.T) {
+// TestKeyInputAcceptsEmptyOpenCodeKey replaces the old
+// TestKeyInputRejectsEmptyOpenCodeKey: OpenCode's key is optional now,
+// matching OpenRouter's existing behavior — an empty value is accepted with
+// no error.
+func TestKeyInputAcceptsEmptyOpenCodeKey(t *testing.T) {
 	m := testModel(t)
 	m = m.enterProviders()
-	m = sendKey(m, "enter") // only OpenCode selected -> a single key field
+	m = sendKey(m, "enter") // both providers selected by default -> OpenCode is the first field
 
-	m = sendKey(m, "enter") // try to submit an empty required key
-	if m.screen != scrProviderKeyInput {
-		t.Fatalf("screen = %v, want scrProviderKeyInput (must stay put on empty required key)", m.screen)
+	m = sendKey(m, "enter") // submit an empty OpenCode key
+	if m.keyErr != "" {
+		t.Fatalf("keyErr = %q, want empty (OpenCode key is optional now)", m.keyErr)
 	}
-	if m.keyErr == "" {
-		t.Fatalf("expected keyErr to be set for an empty required key")
+	if m.screen != scrProviderKeyInput {
+		t.Fatalf("screen = %v, want scrProviderKeyInput (advanced to the OpenRouter field)", m.screen)
+	}
+	if m.keyIdx != 1 {
+		t.Fatalf("keyIdx = %d, want 1 (advanced past the empty OpenCode key)", m.keyIdx)
+	}
+}
+
+// TestProvidersNoneSelectedAdvancesToTier covers the edge case this feature
+// newly exposes: deselecting every provider and pressing enter must not
+// leave the user stuck on scrProviders (there are no key fields to collect,
+// so the flow advances straight to whatever key collection would have
+// advanced to next).
+func TestProvidersNoneSelectedAdvancesToTier(t *testing.T) {
+	m := testModel(t)
+	m = m.enterProviders()
+
+	m = sendKey(m, "space") // deselect OpenCode
+	m = sendKey(m, "j")
+	m = sendKey(m, "space") // deselect OpenRouter
+
+	m = sendKey(m, "enter")
+	if m.screen != scrTier {
+		t.Fatalf("screen = %v, want scrTier (zero providers selected)", m.screen)
+	}
+	if len(m.keyFields) != 0 {
+		t.Fatalf("keyFields = %d, want 0", len(m.keyFields))
+	}
+	if len(m.tiers) != 2 {
+		t.Fatalf("tiers = %v, want 2 entries (go, zen)", m.tiers)
+	}
+}
+
+// TestProvidersNoneSelectedSkipsTierScreenWhenPersisted covers the same
+// zero-providers edge case when a tier is already persisted and --force was
+// not passed: the flow must skip straight to scrConfigProgress, exactly
+// like the last-key-field case does.
+func TestProvidersNoneSelectedSkipsTierScreenWhenPersisted(t *testing.T) {
+	m := testModel(t)
+	m.presetTier = "go"
+	m.skipTierScreen = true
+	m = m.enterProviders()
+
+	m = sendKey(m, "space") // deselect OpenCode
+	m = sendKey(m, "j")
+	m = sendKey(m, "space") // deselect OpenRouter
+
+	m = sendKey(m, "enter")
+	if m.screen != scrConfigProgress {
+		t.Fatalf("screen = %v, want scrConfigProgress (tier already persisted, zero providers selected)", m.screen)
+	}
+	if got := m.keys["SOMM_OC_TIER"]; got != "go" {
+		t.Fatalf("keys[SOMM_OC_TIER] = %q, want %q", got, "go")
 	}
 }
 
@@ -214,13 +284,24 @@ func TestUpdateDoneMsgFailureKeepsUpdateAvailable(t *testing.T) {
 	}
 }
 
+// submitAllKeyFields types "secret" into every open key field and presses
+// enter, advancing past provider-key collection entirely. Both OpenCode and
+// OpenRouter start selected by default, so a fresh enterProviders() ->
+// enter always yields two fields to walk through.
+func submitAllKeyFields(m Model) Model {
+	for range m.keyFields {
+		m = sendKey(m, "secret")
+		m = sendKey(m, "enter")
+	}
+	return m
+}
+
 func TestKeyInputEntersTierScreenAfterLastField(t *testing.T) {
 	m := testModel(t)
 	m = m.enterProviders()
-	m = sendKey(m, "enter") // only OpenCode selected -> a single key field
+	m = sendKey(m, "enter") // both providers selected by default -> OpenCode + OpenRouter fields
 
-	m = sendKey(m, "secret")
-	m = sendKey(m, "enter")
+	m = submitAllKeyFields(m)
 
 	if m.screen != scrTier {
 		t.Fatalf("screen = %v, want scrTier", m.screen)
@@ -234,8 +315,7 @@ func TestTierCursorMovesAndWraps(t *testing.T) {
 	m := testModel(t)
 	m = m.enterProviders()
 	m = sendKey(m, "enter")
-	m = sendKey(m, "secret")
-	m = sendKey(m, "enter")
+	m = submitAllKeyFields(m)
 
 	start := m.tierCursor
 	m = sendKey(m, "j")
@@ -252,8 +332,7 @@ func TestTierEnterSetsKeyAndAdvancesToConfigProgress(t *testing.T) {
 	m := testModel(t)
 	m = m.enterProviders()
 	m = sendKey(m, "enter")
-	m = sendKey(m, "secret")
-	m = sendKey(m, "enter")
+	m = submitAllKeyFields(m)
 
 	want := m.tiers[m.tierCursor]
 	m = sendKey(m, "enter")
@@ -270,8 +349,7 @@ func TestTierEscReturnsToLastKeyField(t *testing.T) {
 	m := testModel(t)
 	m = m.enterProviders()
 	m = sendKey(m, "enter")
-	m = sendKey(m, "secret")
-	m = sendKey(m, "enter")
+	m = submitAllKeyFields(m)
 
 	m = sendKey(m, "esc")
 	if m.screen != scrProviderKeyInput {
@@ -288,8 +366,7 @@ func TestTierScreenPreselectsExistingTierFromEnv(t *testing.T) {
 
 	m = m.enterProviders()
 	m = sendKey(m, "enter")
-	m = sendKey(m, "secret")
-	m = sendKey(m, "enter")
+	m = submitAllKeyFields(m)
 
 	if m.screen != scrTier {
 		t.Fatalf("screen = %v, want scrTier", m.screen)
@@ -306,8 +383,7 @@ func TestTierScreenSkippedWhenAlreadyPersistedWithoutForce(t *testing.T) {
 
 	m = m.enterProviders()
 	m = sendKey(m, "enter")
-	m = sendKey(m, "secret")
-	m = sendKey(m, "enter")
+	m = submitAllKeyFields(m)
 
 	if m.screen != scrConfigProgress {
 		t.Fatalf("screen = %v, want scrConfigProgress (tier screen must be skipped)", m.screen)

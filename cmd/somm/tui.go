@@ -79,8 +79,8 @@ type providerOption struct {
 
 func defaultProviders() []providerOption {
 	return []providerOption{
-		{id: "OpenCode", label: "OpenCode Go/Zen (requerido)", required: true, selected: true},
-		{id: "OpenRouter", label: "OpenRouter (opcional)"},
+		{id: "OpenCode", label: "OpenCode Go/Zen (opcional — se detecta solo si tenés opencode instalado)", selected: true},
+		{id: "OpenRouter", label: "OpenRouter (opcional — recomendado, trae los benchmarks)", selected: true},
 	}
 }
 
@@ -96,7 +96,7 @@ func buildKeyFields(providers []string) []keyField {
 		title := ""
 		switch p {
 		case "OpenCode":
-			title = "OpenCode API Key (requerido)"
+			title = "OpenCode API Key (opcional)"
 		case "OpenRouter":
 			title = "OpenRouter API Key (opcional)"
 		}
@@ -556,6 +556,11 @@ func (m Model) updateProviders(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.screen = scrProviderKeyInput
 			return m, textinput.Blink
 		}
+		// Zero providers selected: there are no key fields to collect, so
+		// advance exactly like the last key field would have (tier screen,
+		// or straight to save when the tier is already persisted) instead
+		// of leaving the user stuck on scrProviders.
+		return m.afterKeyCollection()
 	case "esc":
 		m.screen = scrMenu
 	}
@@ -576,29 +581,12 @@ func (m Model) updateProviderKeyInput(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "enter", "tab":
 		cur := &m.keyFields[m.keyIdx]
 		value := strings.TrimSpace(cur.input.Value())
-		if cur.provider == "OpenCode" && value == "" {
-			m.keyErr = "OpenCode API Key es requerida"
-			return m, nil
-		}
 		m.keyErr = ""
 		m.keys[keyNameForProvider(cur.provider)] = value
 		cur.input.Blur()
 
 		if m.keyIdx == len(m.keyFields)-1 {
-			if m.skipTierScreen {
-				// The tier is already persisted in .env and --force was not
-				// passed: skip the screen, but re-seed the value so
-				// saveEnvFile's whole-file rewrite doesn't drop it
-				// (setup-wizard spec, Requirement: Tier Capture "not
-				// re-asked").
-				m.keys["SOMM_OC_TIER"] = m.presetTier
-				m.screen = scrConfigProgress
-				return m, tea.Batch(m.spinner.Tick, doSaveConfigCmd(m))
-			}
-			m.tiers = []string{"go", "zen"}
-			m.tierCursor = tierCursorFor(m.presetTier, m.tiers)
-			m.screen = scrTier
-			return m, nil
+			return m.afterKeyCollection()
 		}
 		m.keyIdx++
 		m.keyFields[m.keyIdx].input.Focus()
@@ -607,6 +595,26 @@ func (m Model) updateProviderKeyInput(msg tea.KeyMsg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.keyFields[m.keyIdx].input, cmd = m.keyFields[m.keyIdx].input.Update(msg)
 	return m, cmd
+}
+
+// afterKeyCollection routes from provider-key collection to whatever comes
+// next, once there are no more keys left to collect — reached either after
+// the last key field is submitted, or when there were no key fields to
+// collect at all (every provider deselected on the providers screen). When a
+// tier is already persisted and --force was not passed, the tier screen is
+// skipped and the persisted value is re-seeded so saveEnvFile's whole-file
+// rewrite doesn't drop it (setup-wizard spec, Requirement: Tier Capture "not
+// re-asked"). Otherwise, it moves on to the tier capture screen.
+func (m Model) afterKeyCollection() (Model, tea.Cmd) {
+	if m.skipTierScreen {
+		m.keys["SOMM_OC_TIER"] = m.presetTier
+		m.screen = scrConfigProgress
+		return m, tea.Batch(m.spinner.Tick, doSaveConfigCmd(m))
+	}
+	m.tiers = []string{"go", "zen"}
+	m.tierCursor = tierCursorFor(m.presetTier, m.tiers)
+	m.screen = scrTier
+	return m, nil
 }
 
 // tierCursorFor returns the index of preset within tiers, or 0 (the first

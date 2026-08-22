@@ -11,7 +11,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
 	"syscall"
 
 	"github.com/R0LM0/somm/v2/internal/api"
@@ -97,13 +96,13 @@ func printUsage() {
 	fmt.Println("  somm --help                   Show this help")
 	fmt.Println()
 	fmt.Println("Flags:")
-	fmt.Println("  -opencode-api-key string      OpenCode API key (required)")
+	fmt.Println("  -opencode-api-key string      OpenCode API key (optional — auto-detected via local opencode CLI discovery if unset)")
 	fmt.Println("  -openrouter-api-key string    OpenRouter API key (optional)")
 	fmt.Println("  -profile string               Path to role profile YAML file")
 	fmt.Println("  --skip-setup                  Skip auto-setup (for CI/scripts)")
 	fmt.Println()
 	fmt.Println("Environment Variables:")
-	fmt.Println("  OPENCODE_API_KEY              OpenCode Go/Zen subscription key (required)")
+	fmt.Println("  OPENCODE_API_KEY              OpenCode Go/Zen subscription key (optional — local opencode CLI discovery covers OC Go/Zen automatically when available)")
 	fmt.Println("  OPENROUTER_API_KEY            OpenRouter API key (optional)")
 	fmt.Println("  SOMM_PROFILE                  Path to role profile YAML file")
 	fmt.Println("  SOMM_OC_TIER                  OpenCode tier (go|zen); sets default selection.currency=quota")
@@ -195,8 +194,24 @@ func loadEnvFile(envPath string) {
 	}
 }
 
+// configEnvPathFn resolves the .env path configReady checks for existence.
+// It's a var (not a direct call to binaryEnvPath) so tests can substitute a
+// temp path without depending on the real os.Executable() location.
+var configEnvPathFn = binaryEnvPath
+
+// configReady reports whether setup has already been completed at least
+// once. No specific API key is required anymore — OpenCode Go/Zen pricing
+// can be discovered automatically via the local opencode CLI — but a
+// genuine first-time user should still see the setup wizard once, so the
+// signal is: does a .env file already exist next to the binary, regardless
+// of its content?
 func configReady() bool {
-	return strings.TrimSpace(os.Getenv("OPENCODE_API_KEY")) != ""
+	p := configEnvPathFn()
+	if p == "" {
+		return false
+	}
+	_, err := os.Stat(p)
+	return err == nil
 }
 
 func isTerminal() bool {
@@ -225,20 +240,20 @@ func run() error {
 	)
 	// NOTE: API keys passed via CLI flags are visible in process listings (ps aux).
 	// Prefer setting them via environment variables or .env file instead.
-	flag.StringVar(&ocKey, "opencode-api-key", os.Getenv("OPENCODE_API_KEY"), "OpenCode API key (required)")
+	flag.StringVar(&ocKey, "opencode-api-key", os.Getenv("OPENCODE_API_KEY"), "OpenCode API key (optional — auto-detected via local opencode CLI discovery if unset)")
 	flag.StringVar(&orKey, "openrouter-api-key", os.Getenv("OPENROUTER_API_KEY"), "OpenRouter API key (optional)")
 	flag.StringVar(&profilePath, "profile", "", "Path to a role profile YAML file (falls back to SOMM_PROFILE env, ./somm.yaml, XDG config, then the embedded gentle-ai preset)")
 	flag.Parse()
 
-	if strings.TrimSpace(ocKey) == "" {
-		return errors.New("-opencode-api-key is required")
-	}
+	// ocKey is fully optional: api.NewClient tolerates an empty OCAPIKey,
+	// and local opencode CLI discovery already covers OpenCode Go/Zen
+	// automatically when the local CLI is authenticated (see internal/api's
+	// mergeDiscovered).
 
 	// The OpenCode tier captured once by the setup wizard and persisted as
 	// SOMM_OC_TIER refines the default selection currency of any role that
 	// does not set selection.currency explicitly. An unrecognized value is
-	// a fatal error, matching the -opencode-api-key fail-loud style — never
-	// a silent fallback to usd (design Decision 5).
+	// a fatal error — never a silent fallback to usd (design Decision 5).
 	tier := os.Getenv("SOMM_OC_TIER")
 	if _, err := profile.TierCurrency(tier); err != nil {
 		return fmt.Errorf("SOMM_OC_TIER: %w", err)
