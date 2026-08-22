@@ -82,6 +82,10 @@ func filterRoles(all []profile.Role, filter []string) []profile.Role {
 //     formula (as opposed to the untabulated fallback bridge); it drives
 //     buildReason's staleness surfacing (plan-quota-currency spec,
 //     Requirement: Staleness Surfacing).
+//   - reqPer5H caches the price-derived requests/5h value used to compute
+//     quota, so buildReason never re-derives it at a second call site — the
+//     displayed number is guaranteed to equal the ranked one (design: plans
+//     schema + derivation).
 type scoredModel struct {
 	model    EnrichedModel
 	qraw     float64
@@ -89,6 +93,7 @@ type scoredModel struct {
 	price    float64
 	quota    float64
 	hasQuota bool
+	reqPer5H float64
 }
 
 // RecommendConfig computes the best model for each role in the active
@@ -417,15 +422,38 @@ func collectCandidates(models []EnrichedModel, role profile.Role, used map[strin
 	return candidates
 }
 
+// priceOf projects an EnrichedModel's live pricing into a plans.Price value
+// (design: internal/profile/plans never imports internal/api; Price is the
+// seam). Nil-safe: returns the zero Price when m.Pricing is nil, though
+// callers only invoke this after collectCandidates' own nil/zero-price
+// gate, so that path is defensive rather than load-bearing.
+func priceOf(m EnrichedModel) plans.Price {
+	if m.Pricing == nil {
+		return plans.Price{}
+	}
+	p := plans.Price{
+		InputPerM:  m.Pricing.Prompt * 1_000_000,
+		OutputPerM: m.Pricing.Completion * 1_000_000,
+	}
+	if m.Pricing.InputCacheRead != nil {
+		cacheReadPerM := *m.Pricing.InputCacheRead * 1_000_000
+		p.CacheReadPerM = &cacheReadPerM
+	}
+	return p
+}
+
 // resolveQuotaDenominators fills each candidate's quota-currency ranking
 // denominator in place: a candidate present in plansTable uses the
 // saturating affordability formula
-// H_sat / min(requests_per_5h / frequency_weight(role), H_sat) (design
-// Decision 2; plan-quota-currency spec, Requirement: Frequency Weighting);
-// a candidate absent from the table (or when plansTable is nil) uses the
-// price/P_min bridge over this role's constraint-filtered candidate set —
-// P_min is the minimum price across candidates, computed once per call
-// (plan-quota-currency spec, Requirement: Fallback for Untabulated Models).
+// H_sat / min(requests_per_5h / frequency_weight(role), H_sat), where
+// requests_per_5h is derived at request time from the candidate's live
+// price via plansTable.Requests (design Decision 2; plan-quota-currency
+// spec, Requirement: Frequency Weighting); a candidate absent from the
+// table, or whose live price does not resolve a positive derived cost
+// (or when plansTable is nil), uses the price/P_min bridge over this
+// role's constraint-filtered candidate set — P_min is the minimum price
+// across candidates, computed once per call (plan-quota-currency spec,
+// Requirement: Fallback for Untabulated Models).
 func resolveQuotaDenominators(candidates []scoredModel, role profile.Role, plansTable *plans.Table) {
 	if len(candidates) == 0 {
 		return
@@ -441,8 +469,9 @@ func resolveQuotaDenominators(candidates []scoredModel, role profile.Role, plans
 	fw := profile.FrequencyWeight(role.Frequency)
 	for i := range candidates {
 		if plansTable != nil {
-			if rp5h, ok := plansTable.Requests(candidates[i].model.OCID); ok {
-				headroom := float64(rp5h) / fw
+			if rp5h, ok := plansTable.Requests(candidates[i].model.OCID, priceOf(candidates[i].model), plans.Window5H); ok {
+				candidates[i].reqPer5H = rp5h
+				headroom := rp5h / fw
 				if headroom > hSat {
 					headroom = hSat
 				}
@@ -565,9 +594,12 @@ func dominantMetric(weights map[string]float64) string {
 
 // buildReason generates a human-readable reason for the recommendation.
 // plansTable is consulted only when the role's effective currency is
-// "quota", to surface the winning candidate's requests_per_5h and the
-// table's measured_at date (plan-quota-currency spec, Requirement:
-// Staleness Surfacing); it may be nil.
+// "quota", to surface the winning candidate's derived requests_per_5h and
+// the table's curation date (plan-quota-currency spec, Requirement:
+// Staleness Surfacing); it may be nil. The quota figure is always described
+// as derived from the model's current live price, never as a measured
+// value — only the curated shape/multiplier/tier inputs behind it carry a
+// curation date.
 func buildReason(role profile.Role, best *scoredModel, plansTable *plans.Table) string {
 	m := best.model
 	price := 0.0
@@ -607,18 +639,19 @@ func buildReason(role profile.Role, best *scoredModel, plansTable *plans.Table) 
 	// Under "quota" currency, the Reason format is selected by currency
 	// first, regardless of objective: the plan-quota-currency spec's
 	// Staleness Surfacing requirement applies to "every recommendation
-	// whose denominator was resolved via the quota table", not only the
-	// "value" objective. A tabulated winner surfaces its requests_per_5h
-	// and the table's measured_at date; a fallback winner explicitly marks
-	// the absence of a measured quota and omits any staleness claim
-	// (design Decision 6; plan-quota-currency spec, Requirement: Staleness
-	// Surfacing, both scenarios).
+	// whose denominator was resolved via the table and a live price", not
+	// only the "value" objective. A tabulated winner surfaces its derived
+	// requests_per_5h — explicitly framed as derived from the current live
+	// price, plus the table's curation date for the curated shape/tier
+	// inputs — never as a measurement of the request count itself. A
+	// fallback winner explicitly marks the absence of quota data and omits
+	// any curation-date/staleness claim (design Decision 6; plan-quota-
+	// currency spec, Requirement: Staleness Surfacing, both scenarios).
 	if effectiveCurrency(role) == profile.CurrencyQuota {
 		if best.hasQuota && plansTable != nil {
-			reqs, _ := plansTable.Requests(m.OCID)
-			return fmt.Sprintf("Mejor calidad/cuota: %s, %d req/5h (medido %s), $%.3f/M input%s%s — %s", metric, reqs, plansTable.MeasuredAt, price, ctxInfo, subInfo, role.Description)
+			return fmt.Sprintf("Mejor calidad/cuota: %s, ~%.0f req/5h (derivado del precio actual; supuestos curados %s), $%.3f/M input%s%s — %s", metric, best.reqPer5H, plansTable.CuratedAt, price, ctxInfo, subInfo, role.Description)
 		}
-		return fmt.Sprintf("Mejor relación calidad/precio (sin cuota medida): %s, $%.3f/M input%s%s — %s", metric, price, ctxInfo, subInfo, role.Description)
+		return fmt.Sprintf("Mejor relación calidad/precio (sin datos de cuota): %s, $%.3f/M input%s%s — %s", metric, price, ctxInfo, subInfo, role.Description)
 	}
 
 	// Reason text is selected per the role's effective objective (design
