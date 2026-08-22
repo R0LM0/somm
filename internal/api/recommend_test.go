@@ -506,6 +506,199 @@ func TestCollectCandidates_ExcludeFamilyOf(t *testing.T) {
 	}
 }
 
+// --- Phase 5: multi-subscription-recommendations (provider pre-filter,
+// ProviderStatus visibility, buildReason subInfo fix) ---
+
+// mkProviderModel builds an EnrichedModel carrying CLI-discovery provider
+// identity (ProviderID/ProviderName), as mergeDiscovered would set on a
+// genuinely distinct (non-"opencode") CLI-sourced model. Subscription is
+// left unset (""), matching a CLI-only entry never touched by the OC Go/Zen
+// HTTP fetch.
+func mkProviderModel(providerID, providerName, ocID string, intelligence *float64, pricePerM float64) EnrichedModel {
+	m := mkModel(ocID, intelligence, nil, nil, pricePerM, 200000)
+	m.Subscription = ""
+	m.ProviderID = providerID
+	m.ProviderName = providerName
+	m.ModelSlug = ocID
+	return m
+}
+
+// TestCollectCandidates_ProviderScopeFiltersToConfiguredSet locks in design
+// D10: a role scoped to a single provider only ranks within it, from a pool
+// spanning three providers.
+func TestCollectCandidates_ProviderScopeFiltersToConfiguredSet(t *testing.T) {
+	role := profile.Role{
+		ID:        "r",
+		Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection: &profile.Selection{Providers: []string{"opencode"}},
+	}
+	ocNative := mkModel("grok-4.5", float64Ptr(70), nil, nil, 2.0, 200000) // ProviderID "" -> implicit "opencode"
+	openai := mkProviderModel("openai", "OpenAI", "openai/gpt-5.6", float64Ptr(80), 5.0)
+	kimi := mkProviderModel("kimi-for-coding", "Kimi For Coding", "kimi-for-coding/kimi-k2.6", float64Ptr(60), 3.0)
+
+	candidates := collectCandidates([]EnrichedModel{ocNative, openai, kimi}, role, map[string]int{}, 2, map[string]string{}, nil)
+	if len(candidates) != 1 || candidates[0].model.OCID != "grok-4.5" {
+		t.Fatalf("expected only the opencode-scoped candidate, got %+v", candidates)
+	}
+}
+
+// TestCollectCandidates_ProviderScopeUnsetRanksAllConfiguredProviders locks
+// in role-profiles spec, Requirement: Provider Scope Default Is All
+// Configured Providers.
+func TestCollectCandidates_ProviderScopeUnsetRanksAllConfiguredProviders(t *testing.T) {
+	role := profile.Role{ID: "r", Weights: map[string]float64{profile.MetricIntelligence: 1.0}}
+	ocNative := mkModel("grok-4.5", float64Ptr(70), nil, nil, 2.0, 200000)
+	openai := mkProviderModel("openai", "OpenAI", "openai/gpt-5.6", float64Ptr(80), 5.0)
+	kimi := mkProviderModel("kimi-for-coding", "Kimi For Coding", "kimi-for-coding/kimi-k2.6", float64Ptr(60), 3.0)
+
+	candidates := collectCandidates([]EnrichedModel{ocNative, openai, kimi}, role, map[string]int{}, 2, map[string]string{}, nil)
+	if len(candidates) != 3 {
+		t.Fatalf("expected all 3 candidates when providers scope is unset, got %d: %+v", len(candidates), candidates)
+	}
+}
+
+// TestCollectCandidates_ProviderScopeSurvivesCapRelaxation locks in design
+// D10: provider scope applies unchanged across the max-2 -> max-3
+// assignment-cap relaxation. A scoped candidate that only clears the usage
+// cap at max-3 must still be included; an out-of-scope candidate must never
+// appear at either cap.
+func TestCollectCandidates_ProviderScopeSurvivesCapRelaxation(t *testing.T) {
+	role := profile.Role{
+		ID:        "r",
+		Weights:   map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection: &profile.Selection{Providers: []string{"openai"}},
+	}
+	openai := mkProviderModel("openai", "OpenAI", "openai/gpt-5.6", float64Ptr(80), 5.0)
+	kimi := mkProviderModel("kimi-for-coding", "Kimi For Coding", "kimi-for-coding/kimi-k2.6", float64Ptr(60), 3.0)
+	used := map[string]int{"openai/gpt-5.6": 2} // already at the max-2 cap
+	models := []EnrichedModel{openai, kimi}
+
+	atCapTwo := collectCandidates(models, role, used, 2, map[string]string{}, nil)
+	if len(atCapTwo) != 0 {
+		t.Fatalf("expected 0 candidates at cap 2 (openai at usage cap, kimi out of scope), got %+v", atCapTwo)
+	}
+	atCapThree := collectCandidates(models, role, used, 3, map[string]string{}, nil)
+	if len(atCapThree) != 1 || atCapThree[0].model.OCID != "openai/gpt-5.6" {
+		t.Fatalf("expected only the in-scope openai candidate after cap relaxation, got %+v", atCapThree)
+	}
+}
+
+// TestRecommendConfig_NoMatchingProviderResolvesToFallbackReason locks in
+// design D11: a role scoped to an unconfigured provider resolves through
+// the existing nil-findBestModel graceful-degradation path with a
+// scope-specific reason, never a panic or a fatal error — and other roles
+// stay unaffected (weighted-scoring spec, Requirement: Empty Candidate Set
+// Fallback, scenario "No configured provider satisfies the role's scope").
+func TestRecommendConfig_NoMatchingProviderResolvesToFallbackReason(t *testing.T) {
+	role := profile.Role{
+		ID:         "scoped",
+		Criticidad: "ALTA",
+		Weights:    map[string]float64{profile.MetricIntelligence: 1.0},
+		Selection:  &profile.Selection{Providers: []string{"anthropic"}},
+	}
+	other := profile.Role{ID: "unscoped", Criticidad: "BAJA", Weights: map[string]float64{profile.MetricIntelligence: 1.0}}
+	models := []EnrichedModel{mkModel("grok-4.5", float64Ptr(70), nil, nil, 2.0, 200000)}
+
+	assignmentCount := make(map[string]int)
+	assignedFamily := make(map[string]string)
+
+	var reason string
+	if best := findBestModel(models, role, assignmentCount, assignedFamily, nil); best != nil {
+		t.Fatalf("expected no candidate for the scoped role, got %+v", best)
+	} else {
+		reason = noModelReason(models, role, assignmentCount, assignedFamily, nil)
+	}
+	if !strings.Contains(reason, "provider scope") {
+		t.Errorf("noModelReason() = %q, want a reason naming the provider scope", reason)
+	}
+
+	// The unaffected role still resolves normally.
+	if best := findBestModel(models, other, assignmentCount, assignedFamily, nil); best == nil {
+		t.Fatal("expected the unscoped role to still find a candidate")
+	}
+}
+
+// TestRecommendConfig_ZeroPriceModelNeverWinsSurfacesFlatRateReason locks in
+// multi-provider-catalog spec, Requirement: Zero-Price Discovered Models Are
+// Excluded With a Distinguishable Reason: a role whose only candidates are
+// $0-price discovered models never wins one, and RecommendConfig's provider
+// statuses carry the flat-rate exclusion reason.
+func TestRecommendConfig_ZeroPriceModelNeverWinsSurfacesFlatRateReason(t *testing.T) {
+	zeroPriceModel := mkProviderModel("openai", "OpenAI", "openai/gpt-5.6", float64Ptr(80), 0)
+	role := profile.Role{ID: "r", Criticidad: "ALTA", Weights: map[string]float64{profile.MetricIntelligence: 1.0}}
+
+	best := findBestModel([]EnrichedModel{zeroPriceModel}, role, map[string]int{}, map[string]string{}, nil)
+	if best != nil {
+		t.Fatalf("a $0-price model must never win, got %+v", best)
+	}
+
+	statuses := discoveredProviderStatuses([]EnrichedModel{zeroPriceModel})
+	if len(statuses) != 1 {
+		t.Fatalf("expected 1 provider status, got %d: %+v", len(statuses), statuses)
+	}
+	if statuses[0].Ranked {
+		t.Errorf("provider with only $0-price models must be Ranked=false")
+	}
+	if statuses[0].ExcludedReason != flatRateReason {
+		t.Errorf("ExcludedReason = %q, want %q", statuses[0].ExcludedReason, flatRateReason)
+	}
+}
+
+// TestDiscoveredProviderStatuses_PricedProviderIsRankedNoExclusionReason is
+// the counterpart regression lock: a discovered provider with at least one
+// usable priced model is Ranked=true and carries no exclusion reason.
+func TestDiscoveredProviderStatuses_PricedProviderIsRankedNoExclusionReason(t *testing.T) {
+	priced := mkProviderModel("kimi-for-coding", "Kimi For Coding", "kimi-for-coding/kimi-k2.6", float64Ptr(60), 3.0)
+
+	statuses := discoveredProviderStatuses([]EnrichedModel{priced})
+	if len(statuses) != 1 {
+		t.Fatalf("expected 1 provider status, got %d: %+v", len(statuses), statuses)
+	}
+	if !statuses[0].Ranked {
+		t.Errorf("provider with a usable priced model must be Ranked=true")
+	}
+	if statuses[0].ExcludedReason != "" {
+		t.Errorf("ExcludedReason = %q, want empty", statuses[0].ExcludedReason)
+	}
+}
+
+// TestBuildReason_NonOCProviderSubInfoUsesProviderName is the regression
+// lock for the subInfo fix: a non-OC provider winner (e.g. a CLI-discovered
+// "openai" model) must show its own provider name, never the "(Zen)"
+// fallback it used to get for anything not "go"/"both".
+func TestBuildReason_NonOCProviderSubInfoUsesProviderName(t *testing.T) {
+	role := profile.Role{ID: "r", Description: "role desc", Weights: map[string]float64{profile.MetricIntelligence: 1.0}}
+	m := mkProviderModel("openai", "OpenAI", "openai/gpt-5.6", float64Ptr(72.5), 30)
+	best := &scoredModel{model: m, qraw: 72.5, price: 30}
+
+	got := buildReason(role, best, nil)
+	if !strings.Contains(got, "(OpenAI)") {
+		t.Errorf("buildReason() = %q, want it to contain the provider name (OpenAI), not a Zen fallback", got)
+	}
+	if strings.Contains(got, "(Zen)") {
+		t.Errorf("buildReason() = %q, must not mislabel a non-OC provider as (Zen)", got)
+	}
+}
+
+// TestFormatRecommendations_RendersProviderExclusionReason locks in the
+// FormatRecommendations rendering of ProviderStatus.ExcludedReason, stated
+// once per provider (design D12).
+func TestFormatRecommendations_RendersProviderExclusionReason(t *testing.T) {
+	providers := []ProviderStatus{
+		{Name: "OpenCode Go", Configured: true, Ranked: true},
+		{Name: "OpenAI", Configured: true, Ranked: false, ExcludedReason: flatRateReason},
+	}
+
+	text := FormatRecommendations(providers, nil)
+
+	if !contains(text, "OpenAI: "+flatRateReason) {
+		t.Errorf("expected the flat-rate exclusion reason rendered once for OpenAI, got:\n%s", text)
+	}
+	if strings.Count(text, flatRateReason) != 1 {
+		t.Errorf("expected the exclusion reason stated exactly once, got:\n%s", text)
+	}
+}
+
 func TestComputeNormalized_SingleCandidateIsNeutral(t *testing.T) {
 	role := profile.Role{ID: "r", Weights: map[string]float64{profile.MetricIntelligence: 0.6, profile.MetricCoding: 0.4}}
 	candidates := []scoredModel{

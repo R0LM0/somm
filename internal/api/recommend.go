@@ -38,9 +38,90 @@ type Recommendation struct {
 }
 
 // ProviderStatus describes which providers are available.
+//
+// Ranked and ExcludedReason are populated for providers surfaced by local
+// `opencode` CLI discovery (design D12): Ranked is false when every model
+// from that provider was excluded from ranking (e.g. a flat-rate,
+// OAuth-gated $0-price subscription), and ExcludedReason names why —
+// distinguishable from the generic no-pricing-data reason (multi-provider-
+// catalog spec, Requirement: Zero-Price Discovered Models Are Excluded With
+// a Distinguishable Reason). Both fields default to their zero value
+// (Ranked true is set explicitly wherever exclusion isn't tracked at this
+// granularity) so existing output stays byte-identical when discovery is
+// absent (design Migration/Rollout).
 type ProviderStatus struct {
-	Name       string `json:"name"`
-	Configured bool   `json:"configured"`
+	Name           string `json:"name"`
+	Configured     bool   `json:"configured"`
+	Ranked         bool   `json:"ranked"`
+	ExcludedReason string `json:"excludedReason,omitempty"`
+}
+
+// flatRateReason is surfaced for a discovered model with cost.input==0 and
+// cost.output==0 (OAuth/subscription-gated, no per-token billing). Such a
+// model is excluded from ranking via collectCandidates' existing nil/
+// zero-price gate, but the exclusion must be explainable rather than a
+// silent omission (design D12; multi-provider-catalog spec, Requirement:
+// Zero-Price Discovered Models Are Excluded With a Distinguishable Reason).
+const flatRateReason = "flat-rate subscription, no usage-cap ranking available"
+
+// noPricingReason is the generic exclusion reason for a discovered provider
+// whose models carry no usable pricing data at all — distinguishable from
+// flatRateReason per the same requirement.
+const noPricingReason = "no pricing data available"
+
+// discoveredProviderStatuses builds one ProviderStatus entry per distinct
+// provider surfaced by local `opencode` CLI discovery (design D12): the
+// limitation being surfaced (a $0-price subscription can't be ranked) is
+// provider-level, not per-model or per-role, so one entry states it once.
+// Only models with a non-empty ProviderID are considered — HTTP-sourced OC
+// Go/Zen models keep ProviderID empty (Phase 4's byte-identical-output
+// guarantee) and already have their own hardcoded entries in
+// RecommendConfig, so they are excluded here to avoid duplicate entries.
+// Entries are ordered by ProviderID for deterministic output.
+func discoveredProviderStatuses(models []EnrichedModel) []ProviderStatus {
+	type agg struct {
+		name      string
+		anyPriced bool
+		anyZero   bool
+	}
+	byID := make(map[string]*agg)
+	order := make([]string, 0)
+	for _, m := range models {
+		if m.ProviderID == "" {
+			continue
+		}
+		a, ok := byID[m.ProviderID]
+		if !ok {
+			a = &agg{name: m.ProviderName}
+			byID[m.ProviderID] = a
+			order = append(order, m.ProviderID)
+		}
+		if m.Pricing == nil {
+			continue
+		}
+		if m.Pricing.Prompt == 0 && m.Pricing.Completion == 0 {
+			a.anyZero = true
+		} else {
+			a.anyPriced = true
+		}
+	}
+	sort.Strings(order)
+
+	statuses := make([]ProviderStatus, 0, len(order))
+	for _, id := range order {
+		a := byID[id]
+		st := ProviderStatus{Name: a.name, Configured: true, Ranked: true}
+		if !a.anyPriced {
+			st.Ranked = false
+			if a.anyZero {
+				st.ExcludedReason = flatRateReason
+			} else {
+				st.ExcludedReason = noPricingReason
+			}
+		}
+		statuses = append(statuses, st)
+	}
+	return statuses
 }
 
 // filterRoles returns only the roles whose IDs are in the filter list.
@@ -102,8 +183,8 @@ type scoredModel struct {
 // criticidad.
 func RecommendConfig(ctx context.Context, client *Client, prof *profile.Profile, roleFilter []string) ([]ProviderStatus, []Recommendation, error) {
 	providers := []ProviderStatus{
-		{Name: "OpenCode Go", Configured: client.OCAPIKey != ""},
-		{Name: "OpenRouter", Configured: client.ORAPIKey != ""},
+		{Name: "OpenCode Go", Configured: client.OCAPIKey != "", Ranked: true},
+		{Name: "OpenRouter", Configured: client.ORAPIKey != "", Ranked: true},
 	}
 
 	if client.OCAPIKey == "" {
@@ -119,6 +200,8 @@ func RecommendConfig(ctx context.Context, client *Client, prof *profile.Profile,
 	if len(models) == 0 {
 		return providers, nil, fmt.Errorf("no models available from configured providers")
 	}
+
+	providers = append(providers, discoveredProviderStatuses(models)...)
 
 	roles := filterRoles(prof.Roles, roleFilter)
 	if len(roles) == 0 {
@@ -153,13 +236,13 @@ func RecommendConfig(ctx context.Context, client *Client, prof *profile.Profile,
 			recs = append(recs, Recommendation{
 				Agent:      role.ID,
 				Criticidad: role.Criticidad,
-				Reason:     "No model with benchmarks available for this role",
+				Reason:     noModelReason(models, role, assignmentCount, assignedFamily, plansTable),
 			})
 			continue
 		}
 
 		assignmentCount[best.model.OCID]++
-		assignedFamily[role.ID] = deriveProvider(best.model.OCID)
+		assignedFamily[role.ID] = familyOf(best.model)
 
 		var priceInput, priceOutput float64
 		if best.model.Pricing != nil {
@@ -276,6 +359,107 @@ func effectiveCurrency(role profile.Role) string {
 	return role.Selection.Currency
 }
 
+// genericNoModelReason is the pre-existing "no model available" reason,
+// used whenever provider scope is not (at least partly) the cause of an
+// empty candidate set.
+const genericNoModelReason = "No model with benchmarks available for this role"
+
+// scopeNoModelReason is surfaced instead of genericNoModelReason when the
+// role's provider scope excludes every candidate that would otherwise have
+// been eligible (design D11; weighted-scoring spec, Requirement: Empty
+// Candidate Set Fallback, scenario "No configured provider satisfies the
+// role's scope") — a filter without its own reason would otherwise look
+// like a silent empty result.
+const scopeNoModelReason = "No model available within your configured provider scope for this role"
+
+// noModelReason distinguishes why findBestModel returned nil for a role.
+// When the role has a non-empty provider scope and relaxing only that
+// constraint (at the fully-relaxed max-3 assignment cap) would have
+// produced at least one candidate, provider scope is (at least partly) the
+// cause, and scopeNoModelReason is returned; otherwise genericNoModelReason
+// is unchanged from pre-PR5 behavior.
+func noModelReason(models []EnrichedModel, role profile.Role, used map[string]int, assignedFamily map[string]string, plansTable *plans.Table) string {
+	scope := effectiveProviders(role)
+	if len(scope) == 0 {
+		return genericNoModelReason
+	}
+
+	unscoped := role
+	sel := *role.Selection
+	sel.Providers = nil
+	unscoped.Selection = &sel
+
+	if len(collectCandidates(models, unscoped, used, 3, assignedFamily, plansTable)) > 0 {
+		return scopeNoModelReason
+	}
+	return genericNoModelReason
+}
+
+// effectiveProviders returns the role's effective provider scope: nil/empty
+// means "all configured providers" (role-profiles spec, Requirement:
+// Provider Scope Default Is All Configured Providers). Mirrors objective/
+// effectiveCurrency's nil-safety for a Role built directly (not run through
+// profile.Load's merge pass).
+func effectiveProviders(role profile.Role) []string {
+	if role.Selection == nil {
+		return nil
+	}
+	return role.Selection.Providers
+}
+
+// implicitProviderID is the provider identity assumed for a candidate never
+// touched by local CLI discovery: HTTP-sourced OC Go/Zen models keep
+// ProviderID empty (Phase 4's byte-identical-output guarantee), but
+// mergeDiscovered's own dedupe key already treats such models as belonging
+// to "opencode" (api.go's mergeKey("opencode", ...) convention) — the
+// provider-scope pre-filter reuses that same implicit identity.
+const implicitProviderID = "opencode"
+
+// matchesProviderScope reports whether m's provider identity is included in
+// scope. An empty/nil scope means "all configured providers" — never
+// filtered. Matching is case-insensitive against ProviderID (design D9),
+// and is never validated against live host state.
+func matchesProviderScope(m EnrichedModel, scope []string) bool {
+	if len(scope) == 0 {
+		return true
+	}
+	id := m.ProviderID
+	if id == "" {
+		id = implicitProviderID
+	}
+	for _, s := range scope {
+		if strings.EqualFold(strings.TrimSpace(s), id) {
+			return true
+		}
+	}
+	return false
+}
+
+// slugOf returns the bare model slug for a candidate, stripping the
+// "providerID/" CLI-discovery namespace prefix that mergeDiscovered adds to
+// OCID when ProviderID != "opencode" (design D5). Falls back to OCID when
+// ModelSlug is unset (OC Go/Zen-sourced models untouched by discovery).
+func slugOf(m EnrichedModel) string {
+	if m.ModelSlug != "" {
+		return m.ModelSlug
+	}
+	return m.OCID
+}
+
+// familyOf returns the model-vendor family identity used by
+// exclude_family_of. A genuinely distinct CLI-discovered provider
+// (ProviderID set and not the "opencode" merge-normalization target) uses
+// that ProviderID directly; otherwise family is derived from the bare model
+// slug exactly as before discovery existed — this is the fix namespaced CLI
+// OCID values (e.g. "openai/gpt-5.6") need: deriveProvider on the raw,
+// namespaced OCID would mis-derive the family.
+func familyOf(m EnrichedModel) string {
+	if m.ProviderID != "" && m.ProviderID != "opencode" {
+		return m.ProviderID
+	}
+	return deriveProvider(slugOf(m))
+}
+
 // denominatorOf returns the ranking denominator for a candidate under the
 // given effective currency: "usd" resolves to price (unchanged from
 // pre-PR2a behavior); "quota" resolves to the pre-resolved quota-currency
@@ -340,7 +524,9 @@ func qualityPriceRatio(c scoredModel, currency string) float64 {
 // Constraint Pre-Filter"):
 //  1. skip models with no usable pricing
 //  2. skip models already at maxUses
-//  3. apply min_context, max_input_price, requires, exclude_family_of
+//  3. apply provider scope, min_context, max_input_price, requires,
+//     exclude_family_of — provider scope first, the cheapest check, same
+//     tier as the others and never relaxed (design D10)
 //  4. for weighted roles, skip candidates with a nil value on any
 //     positively-weighted metric
 //
@@ -364,7 +550,11 @@ func collectCandidates(models []EnrichedModel, role profile.Role, used map[strin
 			continue
 		}
 
-		// (3) Hard constraints — never relaxed.
+		// (3) Hard constraints — never relaxed. Provider scope first: the
+		// cheapest check (design D10).
+		if !matchesProviderScope(m, effectiveProviders(role)) {
+			continue
+		}
 		if role.MinContext != nil {
 			if m.ContextLength == nil || *m.ContextLength < *role.MinContext {
 				continue
@@ -377,7 +567,7 @@ func collectCandidates(models []EnrichedModel, role profile.Role, used map[strin
 			continue
 		}
 		if role.ExcludeFamilyOf != "" {
-			if fam, ok := assignedFamily[role.ExcludeFamilyOf]; ok && deriveProvider(m.OCID) == fam {
+			if fam, ok := assignedFamily[role.ExcludeFamilyOf]; ok && strings.EqualFold(familyOf(m), fam) {
 				continue
 			}
 		}
@@ -627,12 +817,22 @@ func buildReason(role profile.Role, best *scoredModel, plansTable *plans.Table) 
 		ctxInfo = fmt.Sprintf(", %dK ctx", ctxK)
 	}
 
+	// subInfo names the subscription/provider the winning model is served
+	// through. OC-native (Go/Zen) subscriptions keep their existing labels;
+	// a non-OC provider (CLI-discovered, ProviderName set) must show its own
+	// name instead of falling through to "(Zen)", which would mislabel it
+	// (design's explicit buildReason fix note).
 	subInfo := ""
-	if m.Subscription == "both" {
+	switch {
+	case m.Subscription == "both":
 		subInfo = " (Go + Zen)"
-	} else if m.Subscription == "go" {
+	case m.Subscription == "go":
 		subInfo = " (Go)"
-	} else {
+	case m.Subscription == "zen":
+		subInfo = " (Zen)"
+	case m.ProviderName != "":
+		subInfo = fmt.Sprintf(" (%s)", m.ProviderName)
+	default:
 		subInfo = " (Zen)"
 	}
 
@@ -680,6 +880,12 @@ func FormatRecommendations(providers []ProviderStatus, recs []Recommendation) st
 			sb.WriteString(fmt.Sprintf("✅ %s (API key configurada)\n", p.Name))
 		} else {
 			sb.WriteString(fmt.Sprintf("❌ %s (no configurado)\n", p.Name))
+		}
+		// Stated once per provider (design D12): a provider excluded from
+		// ranking (e.g. a $0-price flat-rate subscription) is never silently
+		// omitted.
+		if p.ExcludedReason != "" {
+			sb.WriteString(fmt.Sprintf("  ⚠️  %s: %s\n", p.Name, p.ExcludedReason))
 		}
 	}
 
