@@ -61,7 +61,7 @@ somm
 ```
 
 It opens with a small Braille dot-matrix logo (rendered from
-`img/vine_somm.png` via `tools/img2braille`, true color per character —
+`img/grapes.png` via `tools/img2braille`, true color per character —
 falls back to plain shape-only art outside a color terminal).
 
 The wizard will:
