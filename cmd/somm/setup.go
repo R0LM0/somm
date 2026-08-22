@@ -60,9 +60,7 @@ func runSetup() {
 		_ = fs.Parse(os.Args[2:])
 	}
 
-	fmt.Println("Somm Setup Wizard")
-	fmt.Println("==============================")
-	fmt.Println()
+	printBanner()
 
 	// The wizard is a Bubble Tea program and needs a real controlling
 	// terminal (it opens /dev/tty directly for raw input on Unix). Bail out
