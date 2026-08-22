@@ -350,6 +350,100 @@ roles:
 	}
 }
 
+func TestValidateSelection_ProvidersEmptyStringEntry(t *testing.T) {
+	err := validateSelection(&Selection{Providers: []string{"OpenCode Go", ""}}, "role \"custom-role\" selection")
+	if err == nil {
+		t.Fatal("expected error for empty providers entry, got nil")
+	}
+	if !strings.Contains(err.Error(), "1") {
+		t.Errorf("expected error to name the malformed entry index 1, got: %v", err)
+	}
+}
+
+func TestLoad_ProvidersExplicitEmptyListIsLoadError(t *testing.T) {
+	data := []byte(`
+version: 1
+selection:
+  providers: []
+roles:
+  - id: custom-role
+`)
+
+	_, err := Load(data)
+	if err == nil {
+		t.Fatal("expected error for explicit empty providers list, got nil")
+	}
+	if !strings.Contains(err.Error(), "providers") {
+		t.Errorf("expected error to mention providers, got: %v", err)
+	}
+}
+
+func TestLoad_ProvidersUnconfiguredProviderStillLoads(t *testing.T) {
+	data := []byte(`
+version: 1
+selection:
+  providers: ["Anthropic"]
+roles:
+  - id: custom-role
+`)
+
+	p, err := Load(data)
+	if err != nil {
+		t.Fatalf("unexpected error loading unconfigured provider name: %v", err)
+	}
+	if len(p.Roles[0].Selection.Providers) != 1 || p.Roles[0].Selection.Providers[0] != "Anthropic" {
+		t.Errorf("expected effective providers [Anthropic], got %v", p.Roles[0].Selection.Providers)
+	}
+}
+
+func TestResolveSelection_RoleOverridesOnlyProviders_InheritsObjectiveAndCurrency(t *testing.T) {
+	data := []byte(`
+version: 1
+selection:
+  objective: quality
+  currency: usd
+roles:
+  - id: role-a
+    selection:
+      providers: ["OpenCode Go", "Kimi For Coding"]
+`)
+
+	p, err := Load(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	r := p.Roles[0]
+	want := []string{"OpenCode Go", "Kimi For Coding"}
+	if len(r.Selection.Providers) != len(want) || r.Selection.Providers[0] != want[0] || r.Selection.Providers[1] != want[1] {
+		t.Errorf("effective providers = %v, want %v", r.Selection.Providers, want)
+	}
+	if r.Selection.Objective != "quality" {
+		t.Errorf("effective objective = %q, want %q (inherited)", r.Selection.Objective, "quality")
+	}
+	if r.Selection.Currency != "usd" {
+		t.Errorf("effective currency = %q, want %q (inherited)", r.Selection.Currency, "usd")
+	}
+}
+
+func TestResolveSelection_NoProvidersAnywhere_InheritsEmptyMeansAllConfigured(t *testing.T) {
+	data := []byte(`
+version: 1
+roles:
+  - id: role-a
+  - id: role-b
+`)
+
+	p, err := Load(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, r := range p.Roles {
+		if len(r.Selection.Providers) != 0 {
+			t.Errorf("role %q: expected empty effective providers (all configured), got %v", r.ID, r.Selection.Providers)
+		}
+	}
+}
+
 func TestLoad_DefaultsMerge(t *testing.T) {
 	minCtx := int64(8000)
 	data := []byte(`
