@@ -60,6 +60,10 @@ Just run `somm` — if no API keys are configured, the setup wizard launches aut
 somm
 ```
 
+It opens with a small Braille dot-matrix logo (rendered from
+`img/vine_somm.png` via `tools/img2braille`, true color per character —
+falls back to plain shape-only art outside a color terminal).
+
 The wizard will:
 1. Check if you already have API keys configured
 2. Ask whether you want to set an OpenRouter key (optional, recommended for
