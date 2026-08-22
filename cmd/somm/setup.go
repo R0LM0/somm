@@ -61,7 +61,7 @@ func runSetup() {
 		_ = fs.Parse(os.Args[2:])
 	}
 
-	fmt.Println("🔧 Somm Setup Wizard")
+	fmt.Println("Somm Setup Wizard")
 	fmt.Println("==============================")
 	fmt.Println()
 
@@ -82,19 +82,19 @@ func runSetup() {
 
 	configPath, err := findOpenCodeConfig()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ OpenCode no encontrado: %v\n", err)
+		fmt.Fprintf(os.Stderr, "✗ OpenCode no encontrado: %v\n", err)
 		os.Exit(1)
 	}
 
 	config, err := readConfig(configPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Error leyendo config: %v\n", err)
+		fmt.Fprintf(os.Stderr, "✗ Error leyendo config: %v\n", err)
 		os.Exit(1)
 	}
 
 	binaryPath, envPath, err := resolveBinaryAndEnv(config)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Error resolviendo binario: %v\n", err)
+		fmt.Fprintf(os.Stderr, "✗ Error resolviendo binario: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -124,7 +124,7 @@ func runSetup() {
 	})
 
 	if _, err := tea.NewProgram(m).Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Error en la TUI: %v\n", err)
+		fmt.Fprintf(os.Stderr, "✗ Error en la TUI: %v\n", err)
 		os.Exit(1)
 	}
 }

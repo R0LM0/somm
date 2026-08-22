@@ -219,7 +219,7 @@ func buildMenu(m Model) []menuEntry {
 
 	updateLabel := "Buscar actualizaciones"
 	if m.updateAvailable {
-		updateLabel = fmt.Sprintf("Buscar actualizaciones (📦 %s disponible)", m.latestVersion)
+		updateLabel = fmt.Sprintf("Buscar actualizaciones (↑ %s disponible)", m.latestVersion)
 	}
 	entries = append(entries, menuEntry{updateLabel, actUpdate})
 

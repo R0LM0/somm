@@ -29,7 +29,7 @@ func runChart(argv []string) {
 
 	label, ok := metricLabel(*metric)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "❌ Métrica inválida: %s (usá intelligence, coding o agentic)\n", *metric)
+		fmt.Fprintf(os.Stderr, "✗ Métrica inválida: %s (usá intelligence, coding o agentic)\n", *metric)
 		os.Exit(1)
 	}
 
@@ -38,7 +38,7 @@ func runChart(argv []string) {
 	client := api.NewClient(nil, "", os.Getenv("OPENROUTER_API_KEY"))
 	models, err := client.ListORModels(context.Background(), *filter)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Error consultando OpenRouter: %v\n", err)
+		fmt.Fprintf(os.Stderr, "✗ Error consultando OpenRouter: %v\n", err)
 		os.Exit(1)
 	}
 
