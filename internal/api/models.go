@@ -66,8 +66,9 @@ type ORModel struct {
 
 // Money is a parsed pricing pair used in the enriched model view.
 type Money struct {
-	Prompt     float64 `json:"prompt"`
-	Completion float64 `json:"completion"`
+	Prompt         float64  `json:"prompt"`
+	Completion     float64  `json:"completion"`
+	InputCacheRead *float64 `json:"input_cache_read,omitempty"`
 }
 
 // ModelBenchmarks is the internal benchmark view for an enriched model.

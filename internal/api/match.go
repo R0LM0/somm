@@ -85,10 +85,15 @@ func enrichWithOpenRouter(enriched []EnrichedModel, orModels []ORModel) {
 		model.ORName = &match.Name
 
 		if match.Pricing != nil {
-			model.Pricing = &Money{
+			money := &Money{
 				Prompt:     ParseMoney(match.Pricing.Prompt),
 				Completion: ParseMoney(match.Pricing.Completion),
 			}
+			if match.Pricing.InputCacheRead != nil {
+				cacheRead := ParseMoney(*match.Pricing.InputCacheRead)
+				money.InputCacheRead = &cacheRead
+			}
+			model.Pricing = money
 		}
 
 		if match.ContextLength != nil {

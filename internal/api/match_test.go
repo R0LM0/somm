@@ -429,6 +429,62 @@ func TestEnrichWithOpenRouter(t *testing.T) {
 	}
 }
 
+func TestEnrichWithOpenRouter_CopiesInputCacheRead(t *testing.T) {
+	tests := []struct {
+		name         string
+		pricing      *Pricing
+		wantCacheVal *float64
+	}{
+		{
+			name: "present cache-read price is parsed and copied",
+			pricing: &Pricing{
+				Prompt:         "0.000002",
+				Completion:     "0.000006",
+				InputCacheRead: ptr("0.0000003"),
+			},
+			wantCacheVal: ptr(0.0000003),
+		},
+		{
+			name: "absent cache-read price stays nil",
+			pricing: &Pricing{
+				Prompt:     "0.000002",
+				Completion: "0.000006",
+			},
+			wantCacheVal: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			models := []EnrichedModel{
+				{OCID: "openai/gpt-4", OCName: "GPT-4", OCProvider: "OpenAI", Subscription: "go"},
+			}
+			orModels := []ORModel{
+				{ID: "openai/gpt-4", Name: "GPT-4", Pricing: tt.pricing},
+			}
+
+			enrichWithOpenRouter(models, orModels)
+
+			got := models[0].Pricing
+			if got == nil {
+				t.Fatal("Pricing = nil, want non-nil")
+			}
+			if tt.wantCacheVal == nil {
+				if got.InputCacheRead != nil {
+					t.Errorf("InputCacheRead = %v, want nil", *got.InputCacheRead)
+				}
+				return
+			}
+			if got.InputCacheRead == nil {
+				t.Fatal("InputCacheRead = nil, want non-nil")
+			}
+			if *got.InputCacheRead != *tt.wantCacheVal {
+				t.Errorf("InputCacheRead = %v, want %v", *got.InputCacheRead, *tt.wantCacheVal)
+			}
+		})
+	}
+}
+
 func TestParseMoney(t *testing.T) {
 	tests := []struct {
 		name string
