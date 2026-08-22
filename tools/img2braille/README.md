@@ -7,9 +7,16 @@ that repo), except colored per Braille cell from the source instead of a
 fixed row gradient.
 
 Used once to generate `cmd/somm/logo_data.go`'s `sommLogoLines` /
-`sommLogoColors` from `img/vine_somm.png`. Not built or run by `somm`
+`sommLogoColors` from `img/grapes.png`. Not built or run by `somm`
 itself — a one-off asset pipeline, kept here so the artwork is
 reproducible if it ever needs to change.
+
+`img/vine_somm.png` (a wine glass inside a terminal-window icon) was the
+first source tried — its straight rectangular frame edges dithered as
+visibly "boxy/geometric" compared to gentle-ai's organic rose. Round,
+glossy, gradient-shaded subjects (like this grape cluster) match that
+technique far better; keep that in mind if choosing a different source
+image later.
 
 ## Requirements
 
@@ -33,7 +40,7 @@ Prints the Braille art to stdout and writes a ready-to-paste Go fragment
 Example (what generated the current `logo_data.go`):
 
 ```bash
-PYTHONIOENCODING=utf-8 python img2braille.py ../../img/vine_somm.png 46 0.30
+PYTHONIOENCODING=utf-8 python img2braille.py ../../img/grapes.png 40
 ```
 
 ## Notes on quality
