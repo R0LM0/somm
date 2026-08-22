@@ -15,14 +15,25 @@ DOT_BITS = [
     [0x40, 0x80],
 ]
 
-# 4x4 Bayer ordered-dither threshold matrix (0..15), used so mid-tones get
-# textured dot density instead of a hard black/white cutoff.
+# 4x4 Bayer ordered-dither threshold matrix (0..15). Proper 2D indexing:
+# BAYER[y % 4][x % 4] for a pixel at (x, y) — NOT a 1D projection of both
+# coordinates, which is what silently broke the first version of this
+# script (produced sparse, noisy-looking output instead of even coverage).
 BAYER = [
     [0, 8, 2, 10],
     [12, 4, 14, 6],
     [3, 11, 1, 9],
     [15, 7, 13, 5],
 ]
+
+# The source PNG has a soft drop-shadow/glow around the icon: a thin band of
+# low-to-mid alpha pixels between the fully-transparent background and the
+# fully-opaque artwork (confirmed via histogram: ~1.13M pixels at alpha<32,
+# ~435K at alpha>224, only ~7K in between). That thin band was leaking
+# through as scattered stray dots. Hard-threshold it away instead of fading
+# it in — this is flat vector art, not a photo, so there's no real
+# soft-edge detail worth preserving here.
+ALPHA_CUTOFF = 128
 
 
 def main():
@@ -41,9 +52,6 @@ def main():
         img = img.crop(bbox)
 
     px_w = chars_wide * 2
-    # preserve aspect ratio; braille cells are roughly square-ish once
-    # 2-wide-4-tall dot cells render in a monospace font (~0.5 char aspect),
-    # so scale height by the *character* aspect, not the raw pixel aspect.
     src_w, src_h = img.size
     char_h = round((src_h / src_w) * chars_wide * 0.5)
     px_h = char_h * 4
@@ -51,23 +59,20 @@ def main():
     img = img.resize((px_w, px_h), Image.LANCZOS)
     rgba = img.load()
 
-    # Build the dot grid + a same-size color sample (per braille CELL, not
-    # per pixel — one color per 2x4 block, averaged from its "on" pixels).
     dot_grid = [[0] * px_w for _ in range(px_h)]
     for y in range(px_h):
         for x in range(px_w):
             r, g, b, a = rgba[x, y]
-            if a < 40:
-                continue  # transparent background pixel: never a dot
-            # perceptual luminance
+            if a < ALPHA_CUTOFF:
+                continue  # background or glow halo: never a dot
             lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
             coverage = 1.0 - (lum / 255.0)  # darker source pixel -> denser dots
-            # alpha-fade at soft edges (the source has anti-aliased edges)
-            coverage *= a / 255.0
-            threshold = (BAYER[y % 4][x % 2 * 2 % 4] + 0.5) / 16
-            # NOTE: x%2 varies 0/1 only per dot-column within a cell; combine
-            # with y for a real 4x4 dither cell instead of a 4x2 one.
-            threshold = (BAYER[y % 4][(x + y * 2) % 4] + 0.5) / 16
+            # Floor so even light (but still opaque, real artwork) areas keep
+            # SOME texture instead of vanishing to zero dots — this is what
+            # gives the rose logo its consistently "filled" look rather than
+            # empty gaps wherever a highlight/cream area happens to be.
+            coverage = max(coverage, 0.22)
+            threshold = (BAYER[y % 4][x % 4] + 0.5) / 16
             if coverage > threshold:
                 dot_grid[y][x] = 1
 
@@ -88,7 +93,7 @@ def main():
                     if dot_grid[py][px]:
                         bits |= DOT_BITS[dy][dx]
                     r, g, b, a = rgba[px, py]
-                    if a > 40:
+                    if a >= ALPHA_CUTOFF:
                         rs += r
                         gs += g
                         bs += b
@@ -101,24 +106,17 @@ def main():
         lines.append("".join(line))
         color_rows.append(colors)
 
-    # Trim trailing all-blank cells per line (U+2800 == blank braille cell).
-    trimmed = []
-    for line in lines:
-        trimmed.append(line.rstrip("⠀"))
+    trimmed = [line.rstrip("⠀") for line in lines]
     print("\n".join(trimmed))
-
     print("\n--- dims: %d chars wide x %d tall ---\n" % (chars_wide, char_h), file=sys.stderr)
 
-    # Emit a Go source fragment: []string of braille lines + a parallel
-    # []string of hex colors per cell (only non-blank cells matter, but keep
-    # it dense/simple: one hex color per character position, "" for blank).
     with open("logo_gen.go.txt", "w", encoding="utf-8") as f:
         f.write("var sommLogoLines = []string{\n")
         for line in lines:
             f.write('\t"%s",\n' % line)
         f.write("}\n\n")
         f.write("var sommLogoColors = [][]string{\n")
-        for cy, colors in enumerate(color_rows):
+        for colors in color_rows:
             f.write("\t{")
             for c in colors:
                 if c is None:

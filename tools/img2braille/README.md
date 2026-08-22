@@ -33,5 +33,19 @@ Prints the Braille art to stdout and writes a ready-to-paste Go fragment
 Example (what generated the current `logo_data.go`):
 
 ```bash
-PYTHONIOENCODING=utf-8 python img2braille.py ../../img/vine_somm.png 40 0.30
+PYTHONIOENCODING=utf-8 python img2braille.py ../../img/vine_somm.png 46 0.30
 ```
+
+## Notes on quality
+
+- The 4x4 Bayer ordered-dither threshold must be indexed as
+  `BAYER[y % 4][x % 4]` — a 1D projection of both coordinates onto one axis
+  (an earlier version of this script did that by mistake) produces sparse,
+  noisy-looking output instead of even coverage.
+- A source image with a soft drop-shadow/glow around the artwork (common in
+  AI-generated icons) leaves a thin band of low/mid-alpha pixels between the
+  fully-transparent background and the fully-opaque icon. Left alone, that
+  band renders as scattered stray dots. `ALPHA_CUTOFF` hard-thresholds it
+  away instead of alpha-blending it in — check the alpha histogram
+  (`img.getchannel("A").histogram()`) if a new source image still looks
+  noisy after conversion.
