@@ -52,17 +52,17 @@ not code correctness.
 
 ## Phase 2: discover.go Types + Parser (PR 2 — no deps)
 
-- [ ] 2.1 `internal/api/discover.go`: define `DiscoveredModel{ProviderID, ID, Name string; InputPerM, OutputPerM float64; CacheReadPerM *float64; ContextLength *int64}` (D7 — same `*PerM` USD-per-1M convention as `plans.Price`).
-- [ ] 2.2 `discover.go`: define `ProviderDiscoverer interface { Discover(ctx) ([]DiscoveredModel, error) }`.
-- [ ] 2.3 `discover.go`: define raw JSON DTOs for one `opencode models --verbose` record (`id`, `providerID`, `name`, `cost.input`/`cost.output`/`cost.cache_read`) — confirm any remaining field names against a live capture; unknown extra fields must decode-and-ignore (no `json:",string"`/interface{} passthrough).
-- [ ] 2.4 `discover.go`: implement `parseDiscoverOutput(raw []byte) ([]DiscoveredModel, error)` — decode JSON array; per-entry drop (not whole-result failure) when `id`/`providerID` missing or `cost` is null (D4).
-- [ ] 2.5 [RED] `discover_test.go` `TestParseDiscoverOutput_Valid` — table-driven multi-provider fixture.
-- [ ] 2.6 [RED] `TestParseDiscoverOutput_EmptyArray` -> `[]DiscoveredModel{}`, no error.
-- [ ] 2.7 [RED] `TestParseDiscoverOutput_MalformedJSON` -> error, non-fatal caller contract.
-- [ ] 2.8 [RED] `TestParseDiscoverOutput_MissingIDOrProviderID` -> that entry dropped, siblings retained (D4).
-- [ ] 2.9 [RED] `TestParseDiscoverOutput_NullCost` -> that entry dropped, siblings retained.
-- [ ] 2.10 [RED] `TestParseDiscoverOutput_UnknownExtraFieldsIgnored` — hostile fixture, PATH-hijack threat-matrix case at the parse layer.
-- [ ] 2.11 [GREEN] implement until 2.5-2.10 pass; `go test ./internal/api/... -run TestParseDiscoverOutput -v`.
+- [x] 2.1 `internal/api/discover.go`: define `DiscoveredModel{ProviderID, ID, Name string; InputPerM, OutputPerM float64; CacheReadPerM *float64; ContextLength *int64}` (D7 — same `*PerM` USD-per-1M convention as `plans.Price`).
+- [x] 2.2 `discover.go`: define `ProviderDiscoverer interface { Discover(ctx) ([]DiscoveredModel, error) }`.
+- [x] 2.3 `discover.go`: define raw JSON DTOs for one `opencode models --verbose` record (`id`, `providerID`, `name`, `cost.input`/`cost.output`/`cost.cache.read`) — unknown extra fields decode-and-ignore (no `json:",string"`/interface{} passthrough).
+- [x] 2.4 `discover.go`: implement `parseDiscoverOutput(raw []byte) ([]DiscoveredModel, error)` — decode JSON array; per-entry drop (not whole-result failure) when `id`/`providerID` missing or `cost` is null (D4).
+- [x] 2.5 [RED] `discover_test.go` `TestParseDiscoverOutput_Valid` — table-driven multi-provider fixture.
+- [x] 2.6 [RED] `TestParseDiscoverOutput_EmptyArray` -> `[]DiscoveredModel{}`, no error.
+- [x] 2.7 [RED] `TestParseDiscoverOutput_MalformedJSON` -> error, non-fatal caller contract.
+- [x] 2.8 [RED] `TestParseDiscoverOutput_MissingIDOrProviderID` -> that entry dropped, siblings retained (D4).
+- [x] 2.9 [RED] `TestParseDiscoverOutput_NullCost` -> that entry dropped, siblings retained.
+- [x] 2.10 [RED] `TestParseDiscoverOutput_UnknownExtraFieldsIgnored` — hostile fixture, PATH-hijack threat-matrix case at the parse layer.
+- [x] 2.11 [GREEN] implement until 2.5-2.10 pass; `go test ./internal/api/... -run TestParseDiscoverOutput -v`.
 
 ## Phase 3: execDiscoverer Subprocess Boundary (PR 3 — depends on Phase 2/A)
 
