@@ -1,0 +1,37 @@
+# img2braille
+
+Converts a source PNG (with alpha) into Braille Unicode (U+2800) dot-matrix
+art plus a per-character true-color map, sampled straight from the image —
+the same idea as gentle-ai's rose logo (`internal/tui/styles/logo.go` in
+that repo), except colored per Braille cell from the source instead of a
+fixed row gradient.
+
+Used once to generate `cmd/somm/logo_data.go`'s `sommLogoLines` /
+`sommLogoColors` from `img/vine_somm.png`. Not built or run by `somm`
+itself — a one-off asset pipeline, kept here so the artwork is
+reproducible if it ever needs to change.
+
+## Requirements
+
+Python 3 with Pillow (`pip install pillow`).
+
+## Usage
+
+```bash
+PYTHONIOENCODING=utf-8 python img2braille.py <input.png> <chars_wide> [crop_bottom_frac]
+```
+
+- `chars_wide` — target width in terminal characters (height is derived to
+  preserve the source image's aspect ratio).
+- `crop_bottom_frac` — optional, 0..1: crops off the bottom fraction of the
+  image before converting (used to drop a wordmark baked into the source
+  image when the caller already renders that text separately).
+
+Prints the Braille art to stdout and writes a ready-to-paste Go fragment
+(`sommLogoLines`/`sommLogoColors`) to `logo_gen.go.txt` next to the script.
+
+Example (what generated the current `logo_data.go`):
+
+```bash
+PYTHONIOENCODING=utf-8 python img2braille.py ../../img/vine_somm.png 40 0.30
+```
