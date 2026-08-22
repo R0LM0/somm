@@ -98,6 +98,19 @@ type EnrichedModel struct {
 	Benchmarks    ModelBenchmarks `json:"benchmarks"`
 	Subscription  string          `json:"subscription"`
 	Reasoning     *ModelReasoning `json:"reasoning"`
+
+	// ProviderID, ProviderName, ModelSlug, and PriceSource are populated only
+	// for models touched by local `opencode` CLI discovery (design D5/D6/D7).
+	// All four are omitempty so output stays byte-identical to today's shape
+	// when discovery is absent (design Migration/Rollout).
+	ProviderID   string `json:"providerId,omitempty"`
+	ProviderName string `json:"providerName,omitempty"`
+	ModelSlug    string `json:"modelSlug,omitempty"`
+	// PriceSource is "opencode-cli" once a CLI-sourced price has been applied;
+	// enrichWithOpenRouter MUST NOT overwrite Pricing while this is set
+	// (design D6 — the CLI's first-party price wins over the OpenRouter proxy
+	// price).
+	PriceSource string `json:"priceSource,omitempty"`
 }
 
 // Client is the HTTP client for OpenCode and OpenRouter APIs.
@@ -106,4 +119,9 @@ type Client struct {
 	HTTPClient *http.Client
 	OCAPIKey   string
 	ORAPIKey   string
+	// Discoverer reports models served by providers configured on this host
+	// (design D1/D2). nil means the default execDiscoverer (production
+	// behavior, per Requirement: Discovery Is On By Default); tests inject a
+	// fake or a no-op (design Interfaces/Contracts comment).
+	Discoverer ProviderDiscoverer
 }
