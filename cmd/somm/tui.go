@@ -73,14 +73,26 @@ type confirmState struct {
 type providerOption struct {
 	id       string
 	label    string
+	desc     string
 	required bool
 	selected bool
 }
 
+// defaultProviders lists only what the wizard actually needs to ask the
+// user about. OpenCode Go/Zen is deliberately NOT here: local `opencode` CLI
+// discovery (see README's Provider discovery section) already detects it
+// automatically, with no key and no prompt required — asking about it here
+// would just be a question with no real effect. OpenRouter is the one
+// provider whose key meaningfully changes what somm can do (benchmarks), so
+// it's the only thing left to offer.
 func defaultProviders() []providerOption {
 	return []providerOption{
-		{id: "OpenCode", label: "OpenCode Go/Zen (opcional — se detecta solo si tenés opencode instalado)", selected: true},
-		{id: "OpenRouter", label: "OpenRouter (opcional — recomendado, trae los benchmarks)", selected: true},
+		{
+			id:       "OpenRouter",
+			label:    "OpenRouter",
+			desc:     "Trae los benchmarks (intelligence, coding, agentic) que usa el ranking. Recomendado — funciona igual sin key, pero sin benchmarks.",
+			selected: true,
+		},
 	}
 }
 
@@ -780,6 +792,10 @@ func (m Model) viewProviders() string {
 		}
 		b.WriteString(menuItem(fmt.Sprintf("%s %s", mark, p.label), i == m.provCursor))
 		b.WriteString("\n")
+		if p.desc != "" {
+			b.WriteString(detailStyle.Render("      " + p.desc))
+			b.WriteString("\n")
+		}
 	}
 	return renderScreen("Configurar somm", b.String(), "j/k: navigate • space: toggle • enter: continue • esc: back")
 }

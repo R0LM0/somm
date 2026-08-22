@@ -62,10 +62,10 @@ somm
 
 The wizard will:
 1. Check if you already have API keys configured
-2. Ask which providers you want to use (both optional — OpenCode Go/Zen is
-   also covered by [provider discovery](#provider-discovery) if you skip it,
-   OpenRouter is recommended for benchmarks)
-3. Guide you through pasting each API key
+2. Ask whether you want to set an OpenRouter key (optional, recommended for
+   benchmarks) — OpenCode Go/Zen isn't asked about at all, since
+   [provider discovery](#provider-discovery) already covers it automatically
+3. Guide you through pasting the key, if you opted in
 4. Ask which OpenCode tier you're on (`go` or `zen`) — asked once, only on
    first setup or with `--force`
 5. Save the `.env` file and update `opencode.json`

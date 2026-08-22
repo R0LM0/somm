@@ -127,24 +127,23 @@ func TestConfirmAddAcceptSkipsRelocationWhenAlreadyCorrect(t *testing.T) {
 	if m.screen != scrProviders {
 		t.Fatalf("screen = %v, want scrProviders", m.screen)
 	}
-	if len(m.providers) != 2 || !m.providers[0].selected || !m.providers[1].selected {
+	if len(m.providers) != 1 || !m.providers[0].selected {
 		t.Fatalf("providers not initialized as expected: %+v", m.providers)
 	}
 }
 
 func TestProvidersToggleAndSubmit(t *testing.T) {
 	m := testModel(t)
-	m = m.enterProviders()
+	m = m.enterProviders() // cursor starts on OpenRouter, the only entry
 
-	// Both providers start selected by default now, so a full toggle
-	// round-trip (off, then back on) must leave OpenRouter selected again.
-	m = sendKey(m, "j")     // move cursor to OpenRouter
+	// OpenRouter starts selected by default, so a full toggle round-trip
+	// (off, then back on) must leave it selected again.
 	m = sendKey(m, "space") // toggle it off
-	if m.providers[1].selected {
+	if m.providers[0].selected {
 		t.Fatalf("OpenRouter still selected after space")
 	}
 	m = sendKey(m, "space") // toggle it back on
-	if !m.providers[1].selected {
+	if !m.providers[0].selected {
 		t.Fatalf("OpenRouter not selected after toggling back on")
 	}
 
@@ -152,48 +151,39 @@ func TestProvidersToggleAndSubmit(t *testing.T) {
 	if m.screen != scrProviderKeyInput {
 		t.Fatalf("screen = %v, want scrProviderKeyInput", m.screen)
 	}
-	if len(m.keyFields) != 2 {
-		t.Fatalf("keyFields = %d, want 2 (OpenCode + OpenRouter)", len(m.keyFields))
+	if len(m.keyFields) != 1 {
+		t.Fatalf("keyFields = %d, want 1 (OpenRouter only — OpenCode isn't offered in the wizard, it's auto-detected)", len(m.keyFields))
 	}
 }
 
 // TestProvidersAllToggleable replaces the old
-// TestProvidersRequiredCannotBeToggled: no provider is required anymore, so
-// both OpenCode and OpenRouter must toggle freely with space.
+// TestProvidersRequiredCannotBeToggled: no provider is required, so
+// OpenRouter (the only entry offered in the wizard) must toggle freely.
 func TestProvidersAllToggleable(t *testing.T) {
 	m := testModel(t)
-	m = m.enterProviders() // cursor starts on OpenCode (index 0)
+	m = m.enterProviders()
 
 	m = sendKey(m, "space")
 	if m.providers[0].selected {
-		t.Fatalf("OpenCode still selected after space, want toggled off")
-	}
-
-	m = sendKey(m, "j") // move cursor to OpenRouter
-	m = sendKey(m, "space")
-	if m.providers[1].selected {
 		t.Fatalf("OpenRouter still selected after space, want toggled off")
 	}
 }
 
-// TestKeyInputAcceptsEmptyOpenCodeKey replaces the old
-// TestKeyInputRejectsEmptyOpenCodeKey: OpenCode's key is optional now,
-// matching OpenRouter's existing behavior — an empty value is accepted with
-// no error.
-func TestKeyInputAcceptsEmptyOpenCodeKey(t *testing.T) {
+// TestKeyInputAcceptsEmptyOpenRouterKey replaces the old
+// TestKeyInputRejectsEmptyOpenCodeKey: with OpenCode no longer offered in
+// the wizard (auto-detected via discovery, no prompt needed), OpenRouter is
+// the only field left, and it has always accepted an empty value.
+func TestKeyInputAcceptsEmptyOpenRouterKey(t *testing.T) {
 	m := testModel(t)
 	m = m.enterProviders()
-	m = sendKey(m, "enter") // both providers selected by default -> OpenCode is the first field
+	m = sendKey(m, "enter") // OpenRouter selected by default -> its key field
 
-	m = sendKey(m, "enter") // submit an empty OpenCode key
+	m = sendKey(m, "enter") // submit an empty OpenRouter key
 	if m.keyErr != "" {
-		t.Fatalf("keyErr = %q, want empty (OpenCode key is optional now)", m.keyErr)
+		t.Fatalf("keyErr = %q, want empty (OpenRouter key is optional)", m.keyErr)
 	}
-	if m.screen != scrProviderKeyInput {
-		t.Fatalf("screen = %v, want scrProviderKeyInput (advanced to the OpenRouter field)", m.screen)
-	}
-	if m.keyIdx != 1 {
-		t.Fatalf("keyIdx = %d, want 1 (advanced past the empty OpenCode key)", m.keyIdx)
+	if m.screen != scrTier {
+		t.Fatalf("screen = %v, want scrTier (advanced past the only, now-empty, key field)", m.screen)
 	}
 }
 
@@ -206,9 +196,7 @@ func TestProvidersNoneSelectedAdvancesToTier(t *testing.T) {
 	m := testModel(t)
 	m = m.enterProviders()
 
-	m = sendKey(m, "space") // deselect OpenCode
-	m = sendKey(m, "j")
-	m = sendKey(m, "space") // deselect OpenRouter
+	m = sendKey(m, "space") // deselect OpenRouter (the only entry)
 
 	m = sendKey(m, "enter")
 	if m.screen != scrTier {
@@ -232,9 +220,7 @@ func TestProvidersNoneSelectedSkipsTierScreenWhenPersisted(t *testing.T) {
 	m.skipTierScreen = true
 	m = m.enterProviders()
 
-	m = sendKey(m, "space") // deselect OpenCode
-	m = sendKey(m, "j")
-	m = sendKey(m, "space") // deselect OpenRouter
+	m = sendKey(m, "space") // deselect OpenRouter (the only entry)
 
 	m = sendKey(m, "enter")
 	if m.screen != scrConfigProgress {
@@ -285,9 +271,7 @@ func TestUpdateDoneMsgFailureKeepsUpdateAvailable(t *testing.T) {
 }
 
 // submitAllKeyFields types "secret" into every open key field and presses
-// enter, advancing past provider-key collection entirely. Both OpenCode and
-// OpenRouter start selected by default, so a fresh enterProviders() ->
-// enter always yields two fields to walk through.
+// enter, advancing past provider-key collection entirely.
 func submitAllKeyFields(m Model) Model {
 	for range m.keyFields {
 		m = sendKey(m, "secret")
@@ -299,7 +283,7 @@ func submitAllKeyFields(m Model) Model {
 func TestKeyInputEntersTierScreenAfterLastField(t *testing.T) {
 	m := testModel(t)
 	m = m.enterProviders()
-	m = sendKey(m, "enter") // both providers selected by default -> OpenCode + OpenRouter fields
+	m = sendKey(m, "enter") // OpenRouter selected by default -> its key field
 
 	m = submitAllKeyFields(m)
 
