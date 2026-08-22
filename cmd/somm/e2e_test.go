@@ -79,8 +79,10 @@ func TestE2E_NoArgsWithEnv_ServerStarts(t *testing.T) {
 		t.Skipf("skipping: failed to build somm binary: %v", err)
 	}
 
-	// Create .env with API key
-	envPath := filepath.Join(t.TempDir(), ".env")
+	// Create .env next to the binary — configReady() now checks for its
+	// existence there (file-existence semantics: setup already ran once),
+	// not any specific env var content.
+	envPath := filepath.Join(filepath.Dir(binary), ".env")
 	if err := os.WriteFile(envPath, []byte("OPENCODE_API_KEY=test-key\n"), 0600); err != nil {
 		t.Fatalf("writing .env: %v", err)
 	}
@@ -227,9 +229,12 @@ func TestE2E_Version_ShowsVersion(t *testing.T) {
 	}
 }
 
-// TestE2E_SkipSetup_WithNoKey_ShowsError verifies that --skip-setup with
-// no API key shows a clear error message
-func TestE2E_SkipSetup_WithNoKey_ShowsError(t *testing.T) {
+// TestE2E_SkipSetup_WithNoKey_StartsServer verifies that --skip-setup with
+// no API keys at all now succeeds instead of failing: no provider key is
+// required anymore (api.NewClient tolerates an empty OCAPIKey/ORAPIKey, and
+// local opencode CLI discovery — or a fully empty catalog — degrades
+// gracefully at the tool layer).
+func TestE2E_SkipSetup_WithNoKey_StartsServer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping e2e test in short mode")
 	}
@@ -252,16 +257,12 @@ func TestE2E_SkipSetup_WithNoKey_ShowsError(t *testing.T) {
 	cmd.Dir = t.TempDir()
 	cmd.Stderr = &stderr
 	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=", "OPENROUTER_API_KEY=")
+	// Stdin is left nil, so exec reads it from the null device: the MCP
+	// stdio transport sees an immediate EOF and the server exits cleanly on
+	// its own without needing an explicit kill.
 
-	err = cmd.Run()
-	if err == nil {
-		t.Fatal("expected command to fail")
-	}
-
-	errMsg := stderr.String()
-	// Should show error about missing key (either message is acceptable)
-	if !strings.Contains(errMsg, "OPENCODE_API_KEY") && !strings.Contains(errMsg, "opencode-api-key") {
-		t.Errorf("expected error about missing API key, got:\n%s", errMsg)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("expected command to succeed with no keys configured, got: %v\nstderr:\n%s", err, stderr.String())
 	}
 }
 

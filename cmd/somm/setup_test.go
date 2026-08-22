@@ -129,6 +129,10 @@ func TestFindBinary_NotFound(t *testing.T) {
 	}
 }
 
+// TestIsAlreadyConfigured covers the new "no key required" semantics:
+// "already configured" now means a valid somm MCP entry exists in
+// opencode.json AND a .env file exists at all — its content, or lack
+// thereof, no longer matters.
 func TestIsAlreadyConfigured(t *testing.T) {
 	tmp := t.TempDir()
 	envPath := filepath.Join(tmp, ".env")
@@ -139,8 +143,8 @@ func TestIsAlreadyConfigured(t *testing.T) {
 		t.Error("expected not configured when .env and config are empty")
 	}
 
-	// .env exists but config missing.
-	if err := os.WriteFile(envPath, []byte("OPENCODE_API_KEY=secret\n"), 0600); err != nil {
+	// .env exists (empty — no key required) but config missing.
+	if err := os.WriteFile(envPath, []byte(""), 0600); err != nil {
 		t.Fatalf("writing .env: %v", err)
 	}
 	if configured, _ := isAlreadyConfigured(envPath, &openCodeConfig{MCP: map[string]json.RawMessage{}}); configured {
@@ -155,7 +159,7 @@ func TestIsAlreadyConfigured(t *testing.T) {
 	}
 	configured, gotPath := isAlreadyConfigured(envPath, config)
 	if !configured {
-		t.Error("expected configured when .env and somm MCP entry exist")
+		t.Error("expected configured when .env exists and somm MCP entry exist")
 	}
 	if gotPath != binPath {
 		t.Errorf("binary path = %q, want %q", gotPath, binPath)
@@ -419,38 +423,35 @@ func TestReadWriteConfig_PreservesUnrelatedData(t *testing.T) {
 	}
 }
 
+// TestValidateProviders covers the new "no provider required" semantics:
+// validateProviders is a permissive no-op now, so every selection —
+// including an empty one — returns nil.
 func TestValidateProviders(t *testing.T) {
 	tests := []struct {
 		name     string
 		selected []string
-		wantErr  bool
 	}{
 		{
 			name:     "OpenCode only is valid",
 			selected: []string{"OpenCode"},
-			wantErr:  false,
 		},
 		{
 			name:     "all providers is valid",
 			selected: []string{"OpenCode", "OpenRouter", "Kimi"},
-			wantErr:  false,
 		},
 		{
-			name:     "missing OpenCode is invalid",
+			name:     "OpenCode absent is valid (no provider is required anymore)",
 			selected: []string{"OpenRouter", "Kimi"},
-			wantErr:  true,
 		},
 		{
-			name:     "empty selection is invalid",
+			name:     "empty selection is valid (no provider is required anymore)",
 			selected: []string{},
-			wantErr:  true,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateProviders(tt.selected)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("validateProviders(%v) error = %v, wantErr %v", tt.selected, err, tt.wantErr)
+			if err := validateProviders(tt.selected); err != nil {
+				t.Errorf("validateProviders(%v) error = %v, want nil", tt.selected, err)
 			}
 		})
 	}

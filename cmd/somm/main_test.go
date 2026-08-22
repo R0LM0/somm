@@ -32,9 +32,11 @@ func TestServerInitialize(t *testing.T) {
 		t.Skipf("skipping: failed to build somm binary: %v", err)
 	}
 
-	cmd := exec.Command(binary, "-opencode-api-key", "test-key")
+	cmd := exec.Command(binary, "--skip-setup", "-opencode-api-key", "test-key")
 	cmd.Dir = repoRoot
-	// Set dummy API key to bypass auto-setup check
+	// --skip-setup bypasses the auto-setup pre-flight (configReady() now
+	// checks for a .env file next to the binary, which this fresh build
+	// doesn't have); the explicit -opencode-api-key flag configures the key.
 	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=test-key")
 
 	stdin, err := cmd.StdinPipe()
@@ -84,48 +86,6 @@ func TestServerInitialize(t *testing.T) {
 	}
 	if !strings.Contains(body, `"somm"`) {
 		t.Fatalf("initialize response missing server name somm: %s", body)
-	}
-}
-
-// TestServerRequiresOpenCodeKey verifies that the binary exits with the legacy
-// error when the required key is missing and --skip-setup is passed.
-func TestServerRequiresOpenCodeKey(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping subprocess smoke test in short mode")
-	}
-
-	repoRoot, err := findRepoRoot()
-	if err != nil {
-		t.Fatalf("finding repo root: %v", err)
-	}
-
-	binary := filepath.Join(t.TempDir(), "somm"+exeSuffix())
-	build := exec.Command("go", "build", "-o", binary, ".")
-	build.Dir = filepath.Join(repoRoot, "cmd", "somm")
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		t.Skipf("skipping: failed to build somm binary: %v", err)
-	}
-
-	var stderr bytes.Buffer
-	cmd := exec.Command(binary, "--skip-setup")
-	cmd.Dir = t.TempDir() // Run in temp dir without .env
-	cmd.Stderr = &stderr
-	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=", "OPENROUTER_API_KEY=")
-
-	err = cmd.Run()
-	if err == nil {
-		t.Fatal("expected server to fail without -opencode-api-key, but it succeeded")
-	}
-	exitErr, ok := err.(*exec.ExitError)
-	if !ok {
-		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
-	}
-	if exitErr.ExitCode() == 0 {
-		t.Fatalf("expected non-zero exit code, got %d", exitErr.ExitCode())
-	}
-	if !strings.Contains(stderr.String(), "-opencode-api-key is required") {
-		t.Fatalf("expected legacy error message, got stderr: %s", stderr.String())
 	}
 }
 
@@ -210,23 +170,42 @@ func TestLoadEnvFile_DoesNotOverrideExisting(t *testing.T) {
 	}
 }
 
+// TestConfigReady covers the new file-existence semantics: no specific key
+// is required anymore, so configReady() reports whether setup has already
+// run at least once (a .env file exists at all, regardless of its content),
+// not whether any particular env var is set. configEnvPathFn is a seam so
+// the check can target a temp path instead of the real os.Executable()
+// directory.
 func TestConfigReady(t *testing.T) {
-	tests := []struct {
-		name    string
-		envValue string
-		want    bool
-	}{
-		{"key present", "secret", true},
-		{"key missing", "", false},
-		{"key whitespace only", "   ", false},
+	tmp := t.TempDir()
+	envPath := filepath.Join(tmp, ".env")
+
+	orig := configEnvPathFn
+	defer func() { configEnvPathFn = orig }()
+	configEnvPathFn = func() string { return envPath }
+
+	if configReady() {
+		t.Error("configReady() = true before .env exists, want false")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("OPENCODE_API_KEY", tt.envValue)
-			if got := configReady(); got != tt.want {
-				t.Errorf("configReady() = %v, want %v", got, tt.want)
-			}
-		})
+
+	if err := os.WriteFile(envPath, []byte(""), 0600); err != nil {
+		t.Fatalf("writing .env: %v", err)
+	}
+	if !configReady() {
+		t.Error("configReady() = false after an empty .env exists, want true (no key content required)")
+	}
+}
+
+// TestConfigReady_UnresolvedPath covers the case where the path resolver
+// itself cannot determine a path (mirrors binaryEnvPath returning "" when
+// os.Executable fails).
+func TestConfigReady_UnresolvedPath(t *testing.T) {
+	orig := configEnvPathFn
+	defer func() { configEnvPathFn = orig }()
+	configEnvPathFn = func() string { return "" }
+
+	if configReady() {
+		t.Error("configReady() = true with an unresolved path, want false")
 	}
 }
 
@@ -263,17 +242,30 @@ func TestMaybeRunSetup(t *testing.T) {
 		}
 	})
 
-	t.Run("config ready returns true", func(t *testing.T) {
-		t.Setenv("OPENCODE_API_KEY", "ready")
+	t.Run("config ready (.env exists) returns true", func(t *testing.T) {
+		tmp := t.TempDir()
+		envPath := filepath.Join(tmp, ".env")
+		if err := os.WriteFile(envPath, []byte(""), 0600); err != nil {
+			t.Fatalf("writing .env: %v", err)
+		}
+		orig := configEnvPathFn
+		defer func() { configEnvPathFn = orig }()
+		configEnvPathFn = func() string { return envPath }
+
 		if !maybeRunSetup(false) {
-			t.Error("maybeRunSetup(false) with config ready = false, want true")
+			t.Error("maybeRunSetup(false) with .env present = false, want true")
 		}
 	})
 
-	t.Run("missing key in non-terminal returns false", func(t *testing.T) {
-		t.Setenv("OPENCODE_API_KEY", "")
+	t.Run("missing .env in non-terminal returns false", func(t *testing.T) {
+		tmp := t.TempDir()
+		envPath := filepath.Join(tmp, ".env") // never written
+		orig := configEnvPathFn
+		defer func() { configEnvPathFn = orig }()
+		configEnvPathFn = func() string { return envPath }
+
 		if maybeRunSetup(false) {
-			t.Error("maybeRunSetup(false) with missing key in non-terminal = true, want false")
+			t.Error("maybeRunSetup(false) with missing .env in non-terminal = true, want false")
 		}
 	})
 }

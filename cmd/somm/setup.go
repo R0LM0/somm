@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -143,24 +142,13 @@ func resolveBinaryAndEnv(config *openCodeConfig) (binaryPath, envPath string, er
 	return binaryPath, filepath.Join(filepath.Dir(binaryPath), ".env"), nil
 }
 
-// isAlreadyConfigured reports whether .env contains OPENCODE_API_KEY and
+// isAlreadyConfigured reports whether .env exists at envPath (regardless of
+// its content — no specific key is required anymore, since OpenCode Go/Zen
+// pricing can be discovered automatically via the local opencode CLI) and
 // opencode.json contains a valid somm MCP entry. When configured, it returns
 // the binary path from the MCP entry.
 func isAlreadyConfigured(envPath string, config *openCodeConfig) (bool, string) {
-	data, err := os.ReadFile(envPath)
-	if err != nil {
-		return false, ""
-	}
-
-	ocKey := ""
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "OPENCODE_API_KEY=") {
-			ocKey = strings.TrimPrefix(line, "OPENCODE_API_KEY=")
-			break
-		}
-	}
-	if strings.TrimSpace(ocKey) == "" {
+	if _, err := os.Stat(envPath); err != nil {
 		return false, ""
 	}
 
@@ -193,10 +181,12 @@ func existingTier(envPath string) string {
 	return ""
 }
 
+// validateProviders is a permissive no-op: no provider is required anymore
+// (OpenCode Go/Zen pricing can be discovered automatically via the local
+// opencode CLI, and OpenRouter is optional). It's kept as a hook for
+// updateProviders' call site, not because any real constraint remains to
+// enforce.
 func validateProviders(v []string) error {
-	if !slices.Contains(v, "OpenCode") {
-		return errors.New("OpenCode es requerido")
-	}
 	return nil
 }
 

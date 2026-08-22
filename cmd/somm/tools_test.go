@@ -27,9 +27,11 @@ func TestToolsE2E(t *testing.T) {
 		t.Skipf("skipping: failed to build somm binary: %v", err)
 	}
 
-	cmd := exec.Command(binary, "-opencode-api-key", "test-key")
+	cmd := exec.Command(binary, "--skip-setup", "-opencode-api-key", "test-key")
 	cmd.Dir = repoRoot
-	// Set dummy API key to bypass auto-setup check
+	// --skip-setup bypasses the auto-setup pre-flight (configReady() now
+	// checks for a .env file next to the binary, which this fresh build
+	// doesn't have); the explicit -opencode-api-key flag configures the key.
 	cmd.Env = append(os.Environ(), "OPENCODE_API_KEY=test-key")
 
 	stdin, err := cmd.StdinPipe()
