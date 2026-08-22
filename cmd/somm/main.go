@@ -44,6 +44,10 @@ func init() {
 }
 
 func main() {
+	// Windows only; a no-op everywhere else. Must run before any output —
+	// see console_windows.go for why.
+	enableUTF8Console()
+
 	// Handle --help and --version before any setup pre-flight.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
