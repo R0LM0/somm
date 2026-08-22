@@ -54,6 +54,17 @@ type ProviderStatus struct {
 	Configured     bool   `json:"configured"`
 	Ranked         bool   `json:"ranked"`
 	ExcludedReason string `json:"excludedReason,omitempty"`
+
+	// ReferenceInputPerM/ReferenceOutputPerM carry ONE representative
+	// model's reference (list) price for this provider — the cheapest
+	// reference match among its $0-price models, never an average across a
+	// heterogeneous set — populated only alongside ExcludedReason==
+	// flatRateReason when at least one of that provider's models resolved a
+	// reference price (design: reference pricing for flat-rate/OAuth
+	// providers). Both nil when no reference match exists, which is the
+	// pre-existing byte-identical shape (design Migration/Rollout).
+	ReferenceInputPerM  *float64 `json:"referenceInputPerM,omitempty"`
+	ReferenceOutputPerM *float64 `json:"referenceOutputPerM,omitempty"`
 }
 
 // flatRateReason is surfaced for a discovered model with cost.input==0 and
@@ -80,9 +91,11 @@ const noPricingReason = "no pricing data available"
 // Entries are ordered by ProviderID for deterministic output.
 func discoveredProviderStatuses(models []EnrichedModel) []ProviderStatus {
 	type agg struct {
-		name      string
-		anyPriced bool
-		anyZero   bool
+		name          string
+		anyPriced     bool
+		anyZero       bool
+		refInputPerM  *float64
+		refOutputPerM *float64
 	}
 	byID := make(map[string]*agg)
 	order := make([]string, 0)
@@ -101,6 +114,15 @@ func discoveredProviderStatuses(models []EnrichedModel) []ProviderStatus {
 		}
 		if m.Pricing.Prompt == 0 && m.Pricing.Completion == 0 {
 			a.anyZero = true
+			// Pick ONE representative reference price (the cheapest found)
+			// rather than averaging across a heterogeneous model set (design:
+			// reference pricing for flat-rate/OAuth providers).
+			if m.ReferenceInputPerM != nil && m.ReferenceOutputPerM != nil {
+				if a.refInputPerM == nil || *m.ReferenceInputPerM < *a.refInputPerM {
+					in, out := *m.ReferenceInputPerM, *m.ReferenceOutputPerM
+					a.refInputPerM, a.refOutputPerM = &in, &out
+				}
+			}
 		} else {
 			a.anyPriced = true
 		}
@@ -115,6 +137,8 @@ func discoveredProviderStatuses(models []EnrichedModel) []ProviderStatus {
 			st.Ranked = false
 			if a.anyZero {
 				st.ExcludedReason = flatRateReason
+				st.ReferenceInputPerM = a.refInputPerM
+				st.ReferenceOutputPerM = a.refOutputPerM
 			} else {
 				st.ExcludedReason = noPricingReason
 			}
@@ -885,7 +909,15 @@ func FormatRecommendations(providers []ProviderStatus, recs []Recommendation) st
 		// ranking (e.g. a $0-price flat-rate subscription) is never silently
 		// omitted.
 		if p.ExcludedReason != "" {
-			sb.WriteString(fmt.Sprintf("  ⚠️  %s: %s\n", p.Name, p.ExcludedReason))
+			sb.WriteString(fmt.Sprintf("  ⚠️  %s: %s", p.Name, p.ExcludedReason))
+			// Reference (list) pricing is a purely informational annotation
+			// (design: reference pricing for flat-rate/OAuth providers) — it
+			// never affects ranking, only appended when a representative
+			// match was found for this provider.
+			if p.ReferenceInputPerM != nil && p.ReferenceOutputPerM != nil {
+				sb.WriteString(fmt.Sprintf(" (referencia de lista: $%.2f/$%.2f por 1M si fuera medido)", *p.ReferenceInputPerM, *p.ReferenceOutputPerM))
+			}
+			sb.WriteString("\n")
 		}
 	}
 

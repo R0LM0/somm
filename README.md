@@ -16,6 +16,8 @@ agent host you use.
 - **Interactive setup wizard** — a console TUI that detects missing API keys and guides you through configuration
 - **Console quality/price chart** — `somm chart` prints a Pareto-frontier view of every OpenRouter model (any provider, not just OpenCode Go/Zen) ranked by price, marking the ones with the best quality for their price
 - List available models from OpenCode Go/Zen subscriptions
+- **Automatic provider discovery** — on, by default, reads every provider already configured in your local `opencode` CLI (Anthropic, OpenAI, Kimi, or anything else you've logged into) and folds their models straight into the catalog, no extra API key needed
+- **Provider scoping per role** — restrict a role's ranking to specific providers with `selection.providers`
 - Cross-reference with OpenRouter benchmarks and pricing
 - Read agent selection criteria from the Gentle AI guide
 - Search specific model benchmarks
@@ -26,7 +28,7 @@ agent host you use.
 - **Export safe config to opencode.json** (only the `model` field)
 - Automatic `.env` configuration loading
 - HTTP timeout, retry, and graceful degradation
-- **Multi-provider support** — OpenCode and OpenRouter
+- **Multi-provider support** — OpenCode, OpenRouter, and every provider your local `opencode` CLI knows about
 
 ## Installation
 
@@ -79,6 +81,8 @@ If you prefer manual configuration, see the options below.
 | `OPENROUTER_API_KEY` | No | OpenRouter API key for benchmarks |
 | `SOMM_PROFILE` | No | Path to a role profile YAML file (see [Role profiles](#role-profiles)) |
 | `SOMM_OC_TIER` | No | Your OpenCode subscription tier: `go` or `zen`. Captured once by the setup wizard; refines the default `selection.currency` (see [Role profiles](#role-profiles)) to `quota` for any role that doesn't set it explicitly. Unset defaults to `usd`. |
+| `SOMM_DISCOVERY` | No | Set to `off` to disable local `opencode` CLI provider discovery (see [Provider discovery](#provider-discovery)). On by default; failures already degrade gracefully, this is a hard rollback switch. |
+| `SOMM_OC_DISCOVERY_REFRESH` | No | Set to `1` to force a live `opencode` CLI call on every discovery instead of using the in-process cache (5 min success / 60s failure TTL). |
 
 ### .env file
 
@@ -103,6 +107,33 @@ For CI/scripts, use `--skip-setup` to fail with a clear message instead of launc
 ```bash
 somm --skip-setup
 ```
+
+### Provider discovery
+
+Beyond OpenCode Go/Zen and OpenRouter, Somm reads whatever providers you
+already have configured in the local `opencode` CLI (`opencode auth login`) —
+Anthropic, OpenAI, Kimi, or anything else — and merges their models straight
+into the catalog, with real pricing when the CLI reports it. No extra API key
+needed on Somm's side: it reuses whatever `opencode` itself is already
+authenticated with.
+
+This runs automatically, once per `opencode models --verbose` call (5s
+timeout, cached 5 minutes on success / 60s on failure, single-flighted so
+concurrent tool calls never spawn more than one process). Every failure mode
+— binary absent, non-zero exit, malformed output, timeout — is non-fatal: it
+warns and falls back to exactly what Somm returned before this feature
+existed. Disable it entirely with `SOMM_DISCOVERY=off` if you'd rather not
+shell out to `opencode` at all.
+
+A discovered provider with no per-token pricing (a flat-rate/subscription
+plan) still shows up — `recommend_config` and `list_available_models` mark it
+`configured` but not `ranked`, with a reason, instead of hiding it silently.
+When that reason is genuinely flat pricing (e.g. an OAuth/subscription login
+like ChatGPT-style OpenAI auth) rather than missing pricing data, Somm also
+looks up a *reference* list price from OpenCode's own local pricing cache
+(`~/.cache/opencode/models.json`) and shows it alongside the reason —
+informational only, it never affects ranking or which model wins a role,
+since you aren't actually billed per token for that provider.
 
 ### Role profiles
 
@@ -141,6 +172,8 @@ roles:
     max_input_price: 5.0
     requires: ["reasoning"]
     frequency: high    # high | medium (default) | low — read only under currency: quota
+    selection:
+      providers: ["opencode", "kimi-for-coding"]  # omit = every discovered provider
 ```
 
 #### Selection: objective and currency
@@ -163,6 +196,17 @@ Both fields resolve independently, role overriding profile overriding the
 wizard sets the *default* `currency` to `quota` for any role that doesn't set
 `selection.currency` explicitly — an explicit `selection.currency` in your
 profile always wins over the tier.
+
+#### Selection: providers
+
+`selection.providers` restricts a role to only the listed providers (matched
+case-insensitively against each model's `providerId` — see
+[Provider discovery](#provider-discovery)). Omitted or `nil` ranks every
+configured provider, same as before this existed; an explicit empty list
+(`providers: []`) fails to load rather than silently ranking nothing. Role
+overrides profile, same merge order as `objective`/`currency`. A role scoped
+to a provider nobody has configured doesn't error — it just has no
+candidates, and `recommend_config` says so in its reason.
 
 ## Usage
 
@@ -225,11 +269,18 @@ Add to your `opencode.json`:
 > catalogs reachable with your keys at query time.
 
 #### list_available_models
-Fetch all available AI models from your subscriptions.
+Fetch all available AI models from your subscriptions, plus every provider
+discovered via the local `opencode` CLI (see
+[Provider discovery](#provider-discovery)).
 
 Parameters:
 - `subscription`: `"go" | "zen" | "both"` (default: `"both"`)
 - `enrich`: boolean (default: `true`) — cross-reference with OpenRouter
+
+Discovered models carry `providerId`, `providerName`, `modelSlug`, and
+`priceSource` — absent (`omitempty`) on models that came only from OpenCode
+Go/Zen or OpenRouter, so output stays byte-identical with `SOMM_DISCOVERY=off`
+or no `opencode` binary on PATH.
 
 #### get_agent_criteria
 Read the Gentle AI agent selection criteria.
@@ -275,11 +326,18 @@ Parameters:
 - `roles`: string[] (optional) — filter specific roles
 
 #### recommend_config
-Detect configured providers and recommend the optimal model per agent role,
-with the reasoning behind each pick.
+Detect configured providers (OpenCode Go/Zen, OpenRouter, and everything
+found via [provider discovery](#provider-discovery)) and recommend the
+optimal model per agent role, with the reasoning behind each pick.
 
 Parameters:
 - `roles`: string[] (optional) — filter specific agent roles
+
+The response opens with a provider status line per configured provider —
+`✅ configured` / ranked, or `⚠️` with a reason when a provider has no
+per-token pricing (flat-rate) or no pricing data at all. A role scoped via
+`selection.providers` to a provider with no candidates gets a specific
+no-match reason instead of falling back to the unscoped pool.
 
 ## Development
 
@@ -316,8 +374,8 @@ Pushing a `v*` tag triggers GoReleaser via GitHub Actions, which builds and
 publishes cross-platform binaries automatically:
 
 ```bash
-git tag v2.3.1
-git push origin v2.3.1
+git tag v2.5.0
+git push origin v2.5.0
 ```
 
 ## License

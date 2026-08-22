@@ -111,6 +111,20 @@ type EnrichedModel struct {
 	// (design D6 — the CLI's first-party price wins over the OpenRouter proxy
 	// price).
 	PriceSource string `json:"priceSource,omitempty"`
+
+	// ReferenceInputPerM/ReferenceOutputPerM are the models.dev-style list
+	// price (USD per 1M tokens, D7 *PerM convention) OpenCode's own static
+	// reference-pricing cache reports for this provider+model, populated only
+	// when the live discovered price is exactly $0 (flat-rate/OAuth
+	// subscription, PriceSource=="opencode-cli") and a reference match is
+	// found (design: reference pricing for flat-rate/OAuth providers). Purely
+	// an additive display annotation — it MUST NEVER feed ranking, scoring,
+	// or which model wins a role; only Pricing does that. Both omitempty so
+	// output stays byte-identical when nothing is discovered/no reference
+	// match (same guarantee as ProviderID/ProviderName/ModelSlug/PriceSource
+	// above).
+	ReferenceInputPerM  *float64 `json:"referenceInputPerM,omitempty"`
+	ReferenceOutputPerM *float64 `json:"referenceOutputPerM,omitempty"`
 }
 
 // Client is the HTTP client for OpenCode and OpenRouter APIs.
@@ -124,4 +138,10 @@ type Client struct {
 	// behavior, per Requirement: Discovery Is On By Default); tests inject a
 	// fake or a no-op (design Interfaces/Contracts comment).
 	Discoverer ProviderDiscoverer
+	// ReferencePricer looks up models.dev-style list pricing for a $0-price
+	// (flat-rate/OAuth) discovered model (design: reference pricing for
+	// flat-rate/OAuth providers). nil means the default fileReferencePricer,
+	// reading OpenCode's own ~/.cache/opencode/models.json cache (production
+	// behavior); tests inject a fake or a no-op, mirroring Discoverer above.
+	ReferencePricer ReferencePricer
 }

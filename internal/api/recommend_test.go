@@ -662,6 +662,50 @@ func TestDiscoveredProviderStatuses_PricedProviderIsRankedNoExclusionReason(t *t
 	}
 }
 
+// TestDiscoveredProviderStatuses_FlatRateProviderCarriesRepresentativeReferencePrice
+// covers the reference-pricing display annotation (design: reference pricing
+// for flat-rate/OAuth providers): when at least one $0-price model for a
+// flat-rate provider carries a reference price, discoveredProviderStatuses
+// picks ONE representative (the cheapest) rather than trying to average a
+// heterogeneous set.
+func TestDiscoveredProviderStatuses_FlatRateProviderCarriesRepresentativeReferencePrice(t *testing.T) {
+	cheap := mkProviderModel("openai", "OpenAI", "openai/gpt-5-mini", nil, 0)
+	cheap.ReferenceInputPerM, cheap.ReferenceOutputPerM = float64Ptr(0.15), float64Ptr(0.6)
+	pricey := mkProviderModel("openai", "OpenAI", "openai/gpt-5.6", nil, 0)
+	pricey.ReferenceInputPerM, pricey.ReferenceOutputPerM = float64Ptr(2.5), float64Ptr(10)
+
+	statuses := discoveredProviderStatuses([]EnrichedModel{pricey, cheap})
+	if len(statuses) != 1 {
+		t.Fatalf("expected 1 provider status, got %d: %+v", len(statuses), statuses)
+	}
+	st := statuses[0]
+	if st.ExcludedReason != flatRateReason {
+		t.Fatalf("ExcludedReason = %q, want %q", st.ExcludedReason, flatRateReason)
+	}
+	if st.ReferenceInputPerM == nil || st.ReferenceOutputPerM == nil {
+		t.Fatalf("ReferenceInputPerM/OutputPerM = %v/%v, want both set", st.ReferenceInputPerM, st.ReferenceOutputPerM)
+	}
+	if *st.ReferenceInputPerM != 0.15 || *st.ReferenceOutputPerM != 0.6 {
+		t.Errorf("representative reference price = %v/%v, want the cheapest (0.15/0.6)", *st.ReferenceInputPerM, *st.ReferenceOutputPerM)
+	}
+}
+
+// TestDiscoveredProviderStatuses_FlatRateProviderNoReferenceMatchStaysNil is
+// the graceful-degradation counterpart: no reference match for any model of
+// a flat-rate provider leaves ProviderStatus's reference fields nil, exactly
+// as before this feature existed.
+func TestDiscoveredProviderStatuses_FlatRateProviderNoReferenceMatchStaysNil(t *testing.T) {
+	zeroPriceModel := mkProviderModel("openai", "OpenAI", "openai/gpt-5.6", float64Ptr(80), 0)
+
+	statuses := discoveredProviderStatuses([]EnrichedModel{zeroPriceModel})
+	if len(statuses) != 1 {
+		t.Fatalf("expected 1 provider status, got %d: %+v", len(statuses), statuses)
+	}
+	if statuses[0].ReferenceInputPerM != nil || statuses[0].ReferenceOutputPerM != nil {
+		t.Errorf("ReferenceInputPerM/OutputPerM = %v/%v, want nil/nil (no reference match)", statuses[0].ReferenceInputPerM, statuses[0].ReferenceOutputPerM)
+	}
+}
+
 // TestBuildReason_NonOCProviderSubInfoUsesProviderName is the regression
 // lock for the subInfo fix: a non-OC provider winner (e.g. a CLI-discovered
 // "openai" model) must show its own provider name, never the "(Zen)"
@@ -696,6 +740,47 @@ func TestFormatRecommendations_RendersProviderExclusionReason(t *testing.T) {
 	}
 	if strings.Count(text, flatRateReason) != 1 {
 		t.Errorf("expected the exclusion reason stated exactly once, got:\n%s", text)
+	}
+}
+
+// TestFormatRecommendations_RendersReferencePriceSuffixWhenPresent covers
+// the reference-pricing display annotation: a flat-rate provider line whose
+// ProviderStatus carries a representative reference price must append it,
+// clearly labeled, to the existing ⚠️ warning line.
+func TestFormatRecommendations_RendersReferencePriceSuffixWhenPresent(t *testing.T) {
+	providers := []ProviderStatus{
+		{
+			Name: "OpenAI", Configured: true, Ranked: false, ExcludedReason: flatRateReason,
+			ReferenceInputPerM: float64Ptr(2.5), ReferenceOutputPerM: float64Ptr(10),
+		},
+	}
+
+	text := FormatRecommendations(providers, nil)
+
+	if !contains(text, "OpenAI: "+flatRateReason) {
+		t.Errorf("expected the flat-rate exclusion reason rendered for OpenAI, got:\n%s", text)
+	}
+	if !contains(text, "$2.50") || !contains(text, "$10.00") {
+		t.Errorf("expected the reference price suffix with both figures, got:\n%s", text)
+	}
+}
+
+// TestFormatRecommendations_OmitsReferencePriceSuffixWhenAbsent is the
+// byte-identical guard: a flat-rate provider with no reference price set
+// (the pre-existing shape, ReferenceInputPerM/OutputPerM nil) renders
+// exactly like today — this is the same assertion as
+// TestFormatRecommendations_RendersProviderExclusionReason, restated here to
+// pin the no-regression contract explicitly for this feature.
+func TestFormatRecommendations_OmitsReferencePriceSuffixWhenAbsent(t *testing.T) {
+	providers := []ProviderStatus{
+		{Name: "OpenAI", Configured: true, Ranked: false, ExcludedReason: flatRateReason},
+	}
+
+	text := FormatRecommendations(providers, nil)
+
+	want := "Tu configuración actual:\n✅ OpenAI (API key configurada)\n  ⚠️  OpenAI: " + flatRateReason + "\n\nRecomendación por agente (ordenada por prioridad):\n\n"
+	if text != want {
+		t.Fatalf("FormatRecommendations() =\n%q\nwant\n%q", text, want)
 	}
 }
 
