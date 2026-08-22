@@ -6,7 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
+	"time"
 )
 
 // DiscoveredModel is one model reported by the local opencode CLI. Prices are
@@ -159,4 +165,210 @@ func splitDiscoverBlocks(raw []byte) (blocks [][]byte, truncated bool) {
 		}
 	}
 	return blocks, inObject
+}
+
+// Discovery constants (design D1, D3; threat matrix).
+const (
+	// discoverTimeout bounds one `opencode models --verbose` invocation.
+	// exec.CommandContext kills and reaps the process on deadline (threat
+	// matrix: hang/no exit).
+	discoverTimeout = 5 * time.Second
+	// discoverMaxStdout caps stdout read from the subprocess. Over-limit
+	// output is treated as malformed, never buffered in full (threat
+	// matrix: unbounded stdout).
+	discoverMaxStdout = 8 << 20 // 8 MiB
+	// discoverMaxStderr bounds how much stderr is retained for logging on a
+	// non-zero exit (design task 3.4) — never logged in full.
+	discoverMaxStderr = 512 // bytes
+	// discoverSuccessTTL/discoverFailureTTL bound the in-process cache
+	// (design D3): a success is trusted longer than a failure, so a
+	// provider authenticated mid-session is picked up within a minute.
+	discoverSuccessTTL = 5 * time.Minute
+	discoverFailureTTL = 60 * time.Second
+)
+
+// discoverDisabledEnv/discoverRefreshEnv are the escape hatches documented
+// in design D1 and the Migration/Rollout section: SOMM_DISCOVERY=off is the
+// rollback path (never invokes the subprocess), SOMM_OC_DISCOVERY_REFRESH=1
+// appends --refresh to the invocation.
+const (
+	discoverDisabledEnv = "SOMM_DISCOVERY"
+	discoverRefreshEnv  = "SOMM_OC_DISCOVERY_REFRESH"
+)
+
+// discoverCall represents one in-flight `opencode models --verbose`
+// invocation shared by every concurrent Discover caller within the same
+// window (threat matrix: concurrent tool calls — at most one subprocess).
+type discoverCall struct {
+	done   chan struct{}
+	models []DiscoveredModel
+	err    error
+}
+
+// execDiscoverer is the default ProviderDiscoverer (design D1/D2): it shells
+// out to the local `opencode` CLI. Results are cached in-process with a TTL
+// (design D3) and single-flighted so concurrent Discover calls share one
+// subprocess invocation instead of spawning N.
+type execDiscoverer struct {
+	// runner executes `opencode models --verbose` (or an injected fake in
+	// tests) and returns raw stdout bytes. It receives a context already
+	// bounded by timeout — the design's Testing Strategy test seam
+	// (Unit(subprocess)).
+	runner func(ctx context.Context) ([]byte, error)
+	// timeout bounds one invocation; defaults to discoverTimeout in
+	// newExecDiscoverer, overridable in tests so timeout/hang tests don't
+	// wait out the real 5s (threat matrix: hang/no exit).
+	timeout time.Duration
+
+	mu        sync.Mutex
+	cachedAt  time.Time
+	cached    []DiscoveredModel
+	cachedErr error
+	inFlight  *discoverCall
+}
+
+// newExecDiscoverer builds the default ProviderDiscoverer, wired to the real
+// opencode CLI via runOpencodeDiscover.
+func newExecDiscoverer() *execDiscoverer {
+	return &execDiscoverer{
+		runner:  runOpencodeDiscover,
+		timeout: discoverTimeout,
+	}
+}
+
+// Discover reports the models served by providers configured on this host.
+// SOMM_DISCOVERY=off is the rollback path: it short-circuits to a no-op
+// without ever invoking the subprocess (design Migration/Rollout). Every
+// failure — binary absent, non-zero exit, malformed/oversize output, timeout
+// — collapses to one slog.Warn and a non-fatal (nil, error) return (design
+// D4); the caller decides how to degrade.
+func (d *execDiscoverer) Discover(ctx context.Context) ([]DiscoveredModel, error) {
+	if os.Getenv(discoverDisabledEnv) == "off" {
+		return nil, nil
+	}
+
+	d.mu.Lock()
+	if !d.cachedAt.IsZero() {
+		ttl := discoverSuccessTTL
+		if d.cachedErr != nil {
+			ttl = discoverFailureTTL
+		}
+		if time.Since(d.cachedAt) < ttl {
+			models, err := d.cached, d.cachedErr
+			d.mu.Unlock()
+			return models, err
+		}
+	}
+	if call := d.inFlight; call != nil {
+		d.mu.Unlock()
+		<-call.done
+		return call.models, call.err
+	}
+
+	call := &discoverCall{done: make(chan struct{})}
+	d.inFlight = call
+	d.mu.Unlock()
+
+	models, err := d.invoke(ctx)
+
+	d.mu.Lock()
+	d.cached, d.cachedErr, d.cachedAt = models, err, time.Now()
+	d.inFlight = nil
+	d.mu.Unlock()
+
+	call.models, call.err = models, err
+	close(call.done)
+	return models, err
+}
+
+// invoke runs the subprocess (real or injected), applies the stdout size
+// guard, and parses the result. Every error path warns and returns non-fatal
+// (nil, error) — never a panic, never a fatal error (design D4).
+func (d *execDiscoverer) invoke(ctx context.Context) ([]DiscoveredModel, error) {
+	timeout := d.timeout
+	if timeout <= 0 {
+		timeout = discoverTimeout
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	raw, err := d.runner(runCtx)
+	if err != nil {
+		slog.Warn("opencode discovery failed, continuing with existing catalog", "error", err)
+		return nil, err
+	}
+	if len(raw) > discoverMaxStdout {
+		err := fmt.Errorf("opencode discovery: stdout exceeded %d byte limit, treating as malformed", discoverMaxStdout)
+		slog.Warn("opencode discovery failed, continuing with existing catalog", "error", err)
+		return nil, err
+	}
+
+	models, err := parseDiscoverOutput(raw)
+	if err != nil {
+		slog.Warn("opencode discovery failed, continuing with existing catalog", "error", err)
+		return nil, err
+	}
+	return models, nil
+}
+
+// buildDiscoverArgv returns the fixed argv for the opencode invocation
+// (threat matrix: binary resolution — no user input is ever interpolated
+// into it). The only variation is the SOMM_OC_DISCOVERY_REFRESH=1 escape
+// hatch (design D1), itself a fixed literal flag, not an interpolated value.
+func buildDiscoverArgv() []string {
+	argv := []string{"models", "--verbose"}
+	if os.Getenv(discoverRefreshEnv) == "1" {
+		argv = append(argv, "--refresh")
+	}
+	return argv
+}
+
+// truncateStderr bounds captured stderr to limit bytes before it is ever
+// logged (design task 3.4) — stderr from an arbitrary subprocess must never
+// be logged or propagated in full.
+func truncateStderr(b []byte, limit int) string {
+	s := strings.TrimSpace(string(b))
+	if len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "...(truncated)"
+}
+
+// runOpencodeDiscover is the real ProviderDiscoverer runner: it resolves
+// `opencode` via exec.LookPath only (never a shell, never a user-supplied
+// path) and runs it with a fixed argv via exec.CommandContext, whose
+// deadline kills and reaps the process (threat matrix: binary resolution,
+// hang/no exit).
+func runOpencodeDiscover(ctx context.Context) ([]byte, error) {
+	path, err := exec.LookPath("opencode")
+	if err != nil {
+		return nil, fmt.Errorf("opencode binary not found on PATH: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, path, buildDiscoverArgv()...)
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("opencode discovery: creating stdout pipe: %w", err)
+	}
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("opencode discovery: starting process: %w", err)
+	}
+
+	// Read at most discoverMaxStdout+1 bytes: reading one byte past the cap
+	// lets the caller detect truncation (len > discoverMaxStdout) without
+	// ever buffering unbounded subprocess output (threat matrix).
+	stdout, readErr := io.ReadAll(io.LimitReader(stdoutPipe, discoverMaxStdout+1))
+	waitErr := cmd.Wait()
+
+	if waitErr != nil {
+		return nil, fmt.Errorf("opencode discovery: process exited with error: %w (stderr: %s)", waitErr, truncateStderr(stderrBuf.Bytes(), discoverMaxStderr))
+	}
+	if readErr != nil {
+		return nil, fmt.Errorf("opencode discovery: reading stdout: %w", readErr)
+	}
+	return stdout, nil
 }
