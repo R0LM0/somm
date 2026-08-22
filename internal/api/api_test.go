@@ -757,3 +757,199 @@ func TestMergeDiscovered_DedupeKeyIsProviderIDPlusSlug(t *testing.T) {
 		t.Errorf("newOpenAI.Pricing = %+v, want prompt=%v", newOpenAI.Pricing, wantOpenAIPrompt)
 	}
 }
+
+// --- Reference pricing for flat-rate/OAuth providers ---
+//
+// mapReferencePricer is a test-only ReferencePricer keyed by
+// "providerID/slug", used to drive applyReferencePricing/ListModels'
+// reference-pricing behavior deterministically, without ever touching the
+// real ~/.cache/opencode/models.json.
+type mapReferencePricer map[string][2]float64
+
+func (m mapReferencePricer) Lookup(providerID, slug string) (float64, float64, bool) {
+	v, ok := m[providerID+"/"+slug]
+	if !ok {
+		return 0, 0, false
+	}
+	return v[0], v[1], true
+}
+
+// TestApplyReferencePricing_FlatRateModelGetsReferencePrice covers the core
+// case: a merged, CLI-discovered model whose live price is exactly $0 gets
+// its reference (list) price attached from a matching pricer entry.
+func TestApplyReferencePricing_FlatRateModelGetsReferencePrice(t *testing.T) {
+	models := []EnrichedModel{
+		{
+			OCID: "openai/gpt-5.6", ProviderID: "openai", ModelSlug: "gpt-5.6",
+			Pricing: &Money{Prompt: 0, Completion: 0}, PriceSource: "opencode-cli",
+		},
+	}
+	pricer := mapReferencePricer{"openai/gpt-5.6": [2]float64{2.5, 10}}
+
+	got := applyReferencePricing(pricer, models)
+
+	if got[0].ReferenceInputPerM == nil || got[0].ReferenceOutputPerM == nil {
+		t.Fatalf("ReferenceInputPerM/OutputPerM = %v/%v, want both set", got[0].ReferenceInputPerM, got[0].ReferenceOutputPerM)
+	}
+	if *got[0].ReferenceInputPerM != 2.5 || *got[0].ReferenceOutputPerM != 10 {
+		t.Errorf("reference price = %v/%v, want 2.5/10", *got[0].ReferenceInputPerM, *got[0].ReferenceOutputPerM)
+	}
+}
+
+// TestApplyReferencePricing_NoMatchStaysNil covers graceful degradation: a
+// flat-rate model with no reference match leaves both fields nil, no error.
+func TestApplyReferencePricing_NoMatchStaysNil(t *testing.T) {
+	models := []EnrichedModel{
+		{
+			OCID: "openai/gpt-5.6", ProviderID: "openai", ModelSlug: "gpt-5.6",
+			Pricing: &Money{Prompt: 0, Completion: 0}, PriceSource: "opencode-cli",
+		},
+	}
+
+	got := applyReferencePricing(mapReferencePricer{}, models)
+
+	if got[0].ReferenceInputPerM != nil || got[0].ReferenceOutputPerM != nil {
+		t.Errorf("reference price = %v/%v, want nil/nil (no match)", got[0].ReferenceInputPerM, got[0].ReferenceOutputPerM)
+	}
+}
+
+// TestApplyReferencePricing_NonFlatRateModelNeverGetsReferencePrice proves
+// the field only ever applies to $0 live-priced models: a real-priced
+// CLI-discovered model must stay nil even when a reference match exists.
+func TestApplyReferencePricing_NonFlatRateModelNeverGetsReferencePrice(t *testing.T) {
+	models := []EnrichedModel{
+		{
+			OCID: "openai/gpt-5.6", ProviderID: "openai", ModelSlug: "gpt-5.6",
+			Pricing: &Money{Prompt: 3.0 / 1e6, Completion: 12.0 / 1e6}, PriceSource: "opencode-cli",
+		},
+	}
+	pricer := mapReferencePricer{"openai/gpt-5.6": [2]float64{2.5, 10}}
+
+	got := applyReferencePricing(pricer, models)
+
+	if got[0].ReferenceInputPerM != nil || got[0].ReferenceOutputPerM != nil {
+		t.Errorf("reference price = %v/%v, want nil/nil (model is not flat-rate)", got[0].ReferenceInputPerM, got[0].ReferenceOutputPerM)
+	}
+}
+
+// TestApplyReferencePricing_NonCLISourcedZeroPriceModelUntouched proves the
+// gate also requires PriceSource=="opencode-cli": a $0-price model sourced
+// any other way (e.g. an OC Go/Zen entry never touched by discovery) must
+// never get a reference price, even when a reference match exists for its
+// identity.
+func TestApplyReferencePricing_NonCLISourcedZeroPriceModelUntouched(t *testing.T) {
+	models := []EnrichedModel{
+		{OCID: "gpt-5.6", Pricing: &Money{Prompt: 0, Completion: 0}},
+	}
+	pricer := mapReferencePricer{"opencode/gpt-5.6": [2]float64{2.5, 10}}
+
+	got := applyReferencePricing(pricer, models)
+
+	if got[0].ReferenceInputPerM != nil || got[0].ReferenceOutputPerM != nil {
+		t.Errorf("reference price = %v/%v, want nil/nil (PriceSource is not opencode-cli)", got[0].ReferenceInputPerM, got[0].ReferenceOutputPerM)
+	}
+}
+
+// TestListModels_FlatRateDiscoveredModelGetsReferencePrice is the end-to-end
+// wiring proof: a Client with both a fakeDiscoverer (reporting a $0-price
+// CLI model) and an injected ReferencePricer surfaces the reference price on
+// the merged EnrichedModel returned by ListModels.
+func TestListModels_FlatRateDiscoveredModelGetsReferencePrice(t *testing.T) {
+	goBody := `{"data":[{"id":"gpt-5.6-oc","object":"model","created":1,"owned_by":"test"}]}`
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/zen/go/v1/models":
+			w.Write([]byte(goBody))
+		case "/zen/v1/models":
+			w.Write([]byte(`{"data":[]}`))
+		case "/api/v1/models":
+			w.Write([]byte(`{"data":[]}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := newClientWithServer(srv, "oc-key", "or-key")
+	client.Discoverer = fakeDiscoverer{models: []DiscoveredModel{
+		{ProviderID: "openai", ID: "gpt-5.6", Name: "GPT 5.6", InputPerM: 0, OutputPerM: 0},
+	}}
+	client.ReferencePricer = mapReferencePricer{"openai/gpt-5.6": [2]float64{2.5, 10}}
+
+	models, err := client.ListModels(context.Background(), "both", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("len(models) = %d, want 2 (1 OC Go + 1 discovered)", len(models))
+	}
+
+	var m *EnrichedModel
+	for i := range models {
+		if models[i].ProviderID == "openai" {
+			m = &models[i]
+		}
+	}
+	if m == nil {
+		t.Fatal("discovered openai model not found in merged catalog")
+	}
+	if m.ReferenceInputPerM == nil || m.ReferenceOutputPerM == nil {
+		t.Fatalf("ReferenceInputPerM/OutputPerM = %v/%v, want both set", m.ReferenceInputPerM, m.ReferenceOutputPerM)
+	}
+	if *m.ReferenceInputPerM != 2.5 || *m.ReferenceOutputPerM != 10 {
+		t.Errorf("reference price = %v/%v, want 2.5/10", *m.ReferenceInputPerM, *m.ReferenceOutputPerM)
+	}
+	// Ranking-affecting fields must stay exactly as CLI discovery reported
+	// them: the reference price is purely additive and must never alter
+	// Pricing/PriceSource (out of scope: ranking/scoring).
+	if m.Pricing == nil || m.Pricing.Prompt != 0 || m.Pricing.Completion != 0 {
+		t.Errorf("Pricing = %+v, want zero (live flat-rate price unchanged)", m.Pricing)
+	}
+	if m.PriceSource != "opencode-cli" {
+		t.Errorf("PriceSource = %q, want unchanged opencode-cli", m.PriceSource)
+	}
+}
+
+// TestListModels_SOMMDiscoveryOffLeavesNoReferencePricing proves
+// SOMM_DISCOVERY=off fully disables this feature too: with discovery off
+// there is no CLI-sourced $0-price model to annotate, so no reference price
+// is ever attached, even with a ReferencePricer injected that would
+// otherwise match.
+func TestListModels_SOMMDiscoveryOffLeavesNoReferencePricing(t *testing.T) {
+	t.Setenv("SOMM_DISCOVERY", "off")
+
+	goBody := `{"data":[{"id":"gpt-5.6","object":"model","created":1,"owned_by":"test"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/zen/go/v1/models":
+			w.Write([]byte(goBody))
+		case "/zen/v1/models":
+			w.Write([]byte(`{"data":[]}`))
+		case "/api/v1/models":
+			w.Write([]byte(`{"data":[]}`))
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	client := newClientWithServer(srv, "oc-key", "or-key")
+	// execDiscoverer itself is Client.Discoverer's production default; here
+	// we leave Discoverer unset (nil) but rely on SOMM_DISCOVERY=off having
+	// already short-circuited discovery for the real default. Since tests
+	// resolve to noopDiscoverer anyway, this asserts the reference-pricing
+	// gate never fires absent any opencode-cli-sourced model, regardless of
+	// why discovery produced nothing.
+	client.ReferencePricer = mapReferencePricer{"opencode/gpt-5.6": [2]float64{2.5, 10}}
+
+	models, err := client.ListModels(context.Background(), "both", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, m := range models {
+		if m.ReferenceInputPerM != nil || m.ReferenceOutputPerM != nil {
+			t.Errorf("model %s reference price = %v/%v, want nil/nil with discovery disabled", m.OCID, m.ReferenceInputPerM, m.ReferenceOutputPerM)
+		}
+	}
+}

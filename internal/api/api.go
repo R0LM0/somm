@@ -221,6 +221,7 @@ func (c *Client) ListModels(ctx context.Context, subscription string, enrich boo
 	}
 
 	models = mergeDiscovered(models, discovered)
+	models = applyReferencePricing(c.referencePricer(), models)
 
 	if enrich {
 		orModels, err := c.fetchOpenRouter(ctx, orURL)
